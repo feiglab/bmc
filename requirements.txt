@@ -5,3 +5,5 @@ pandas>=2.2
 mdtraj>=1.11
 gemmi>=0.7
 pymbar>=4.0
+mdsim @ git+https://github.com/feiglab/mdsim.git
+cocomo @ git+https://github.com/feiglab/cocomo.git
