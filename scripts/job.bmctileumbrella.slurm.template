@@ -9,7 +9,7 @@
 
 cd DIR
 
-SCRIPT/run.bmctileumbrella.job.sh BIAS NSTEPS
+SCRIPT/run.bmctileumbrella.job.sh MODE BIAS NSTEPS
 
 if [ -s BDIR/requeue ]; then
    scontrol requeue $SLURM_JOB_ID

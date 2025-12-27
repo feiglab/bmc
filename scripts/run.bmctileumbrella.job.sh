@@ -2,12 +2,22 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $(basename "$0") <bias> <nstep>" >&2
+  echo "Usage: $(basename "$0") <mode> <bias> <nstep>" >&2
   exit 2
 }
 
-bias="${1:-}"; nstep="${2:-}"
+mode="${1:-allatom}"
+
+bias="${2:-}"; nstep="${3:-}"
 [[ -n "$bias" && -n "$nstep" ]] || usage
+
+tstep=0.004
+gamma=0.1
+
+if [[ "${mode,,}" == "cocomo" ]]; then
+   tstep=0.03   
+   gamma=1.0
+fi
 
 tdir="run_${bias}"
 
@@ -47,13 +57,15 @@ rm -f "$tdir/requeue"
 : > "$tdir/error.out"
 touch "$lock"
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+
 # call to program to do the work
-bmctileumbrella.py "$bias" "$next" "$nstep" >"$tdir/run.out" 2>"$tdir/error.out"
+$script_dir/bmctileumbrella.py "$mode" "$bias" "$next" "$nstep" "$tstep" "$gamma" >"$tdir/run.out" 2>"$tdir/error.out"
 py_rc=$?
 
 # If python itself failed, treat as error (still allow CUDA parsing below)
 if (( py_rc != 0 )); then
-  echo "prodbias.py exited with code $py_rc" >&2
+  echo "bmctileumbrella.py exited with code $py_rc" >&2
 fi
 
 # Hard failure: illegal address -> don't requeue automatically
