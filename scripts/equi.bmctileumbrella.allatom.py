@@ -4,7 +4,7 @@
 #
 #  equi.bmctileumbrella.allatom.py [args]
 #      args:   setup             : setup directory
-#              dimer.pdb         : equilibration directory
+#              equi              : equilibration directory
 #              0                 : device
 #
 
