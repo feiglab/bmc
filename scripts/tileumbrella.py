@@ -1,58 +1,164 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
+from __future__ import annotations
 
-import sys
-import numpy as np
+import argparse
 from pathlib import Path
+from typing import Sequence
 
-from mdsim import MDSim, PDBReader, StructureSelector
-from cocomo import Assembly, COCOMO
+from cocomo import COCOMO
+from mdsim import MDSim
 
-def _argv(i: int, default: str) -> str:
-    """Return argv[i] if present and non-empty; otherwise default."""
-    return sys.argv[i] if len(sys.argv) > i and str(sys.argv[i]).strip() != "" else default
 
-mode=_argv(1,"allatom")
-biasval=_argv(2,"6.00")
-nrun=int(_argv(3,"1"))
-nstep=int(_argv(4,"100000"))
-tstep=float(_argv(5,"0.004"))
-gamma=float(_argv(6,"0.1"))
+def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        prog="tileumbrella.py",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
 
-temperature=298
+    mode_grp = p.add_mutually_exclusive_group()
+    mode_grp.add_argument(
+        "--mode",
+        choices=["allatom", "cocomo"],
+        default="allatom",
+        help="Simulation mode",
+    )
+    mode_grp.add_argument(
+        "--allatom",
+        dest="mode",
+        action="store_const",
+        const="allatom",
+        help="Shortcut for --mode allatom",
+    )
+    mode_grp.add_argument(
+        "--cocomo",
+        dest="mode",
+        action="store_const",
+        const="cocomo",
+        help="Shortcut for --mode cocomo",
+    )
 
-nout=10000
+    p.add_argument(
+        "--bias",
+        dest="biasval",
+        type=float,
+        default=6.00,
+        help="Bias value (nm or model units, same as directory tag)",
+    )
+    p.add_argument(
+        "--run",
+        dest="nrun",
+        type=int,
+        default=1,
+        help="Production run index to write (expects restart from run-1)",
+    )
+    p.add_argument(
+        "--nstep",
+        type=int,
+        default=100000,
+        help="Number of MD steps",
+    )
+    p.add_argument(
+        "--tstep",
+        type=float,
+        default=0.004,
+        help="Timestep",
+    )
+    p.add_argument(
+        "--gamma",
+        type=float,
+        default=0.1,
+        help="Langevin friction (1/ps)",
+    )
+    p.add_argument(
+        "--temperature",
+        type=float,
+        default=298.0,
+        help="Temperature (K)",
+    )
+    p.add_argument(
+        "--nout",
+        type=int,
+        default=10000,
+        help="Output/report interval (steps)",
+    )
+    p.add_argument(
+        "--resources",
+        type=str,
+        default="CUDA",
+        help="OpenMM platform/resources string",
+    )
+    p.add_argument(
+        "--dir",
+        dest="bdir",
+        type=Path,
+        default=None,
+        help="Run directory (default: run_<bias formatted to 2 decimals>)",
+    )
 
-resources='CUDA'
+    return p.parse_args(argv)
 
-if not biasval or float(biasval)<1.0 or float(biasval)>20.0:
-    print("run with biasval (6.00) as argument")
-    exit()
 
-bdir=Path(f"run_{biasval}")
+def main() -> None:
+    args = _parse_args()
 
-if not bdir.exists():
-    print(f"directory {str(bdir)} does not exist")
-    exit()
+    mode = str(args.mode).lower()
+    biasval = float(args.biasval)
 
-last=nrun-1 
-restart=bdir / f"biasprod_{last}.xml"
-if not restart.exists():
-    print(f"restart file {str(restart)} does not exist")
-    exit()
+    if not (1.0 <= biasval <= 20.0):
+        raise SystemExit("ERROR: --bias must be in [1.0, 20.0]")
 
-if simmode.lower() == 'cocomo':
-    sim=COCOMO(xml=str(bdir / f"bias_system_{biasval}.xml"),restart=str(restart))
-else:
-    sim=MDSim(xml=str(bdir / f"bias_system_{biasval}.xml"),restart=str(restart))
+    if args.nrun < 0:
+        raise SystemExit("ERROR: --run must be >= 0")
 
-sim.setup_simulation(resources=resources, temperature=temperature, tstep=tstep, gamma=gamma)
+    tag = f"{biasval:.2f}"
+    bdir = (Path(args.bdir) if args.bdir is not None else Path(f"run_{tag}")).resolve()
 
-biaslist=['Umbrella_x', 'Umbrella_y', 'Umbrella_z', 'Umbrella_angle_norm', 
-          'Umbrella_dihedral', 'Umbrella_angle', 'Umbrella_COM']
-sim.simulate(nstep=nstep,nout=nout,
-           logfile=str(bdir / f"biasprod_{nrun}.log"),
-           dcdfile=str(bdir / f"biasprod_{nrun}.dcd"),
-           elogfile=str(bdir / f"biasprod_{nrun}.dat"),forcelist=biaslist)
+    if not bdir.is_dir():
+        raise SystemExit(f"ERROR: directory does not exist: {bdir}")
 
-sim.write_state(str(bdir / f"biasprod_{nrun}.xml"))
+    last = args.nrun - 1
+    restart = bdir / f"biasprod_{last}.xml"
+    if not restart.is_file():
+        raise SystemExit(f"ERROR: restart file does not exist: {restart}")
+
+    sysxml = bdir / f"bias_system_{tag}.xml"
+    if not sysxml.is_file():
+        raise SystemExit(f"ERROR: system xml does not exist: {sysxml}")
+
+    if mode == "cocomo":
+        sim = COCOMO(xml=str(sysxml), restart=str(restart))
+    else:
+        sim = MDSim(xml=str(sysxml), restart=str(restart))
+
+    sim.setup_simulation(
+        resources=str(args.resources),
+        temperature=float(args.temperature),
+        tstep=float(args.tstep),
+        gamma=float(args.gamma),
+    )
+
+    biaslist = [
+        "Umbrella_x",
+        "Umbrella_y",
+        "Umbrella_z",
+        "Umbrella_angle_norm",
+        "Umbrella_dihedral",
+        "Umbrella_angle",
+        "Umbrella_COM",
+    ]
+
+    nrun = int(args.nrun)
+    sim.simulate(
+        nstep=int(args.nstep),
+        nout=int(args.nout),
+        logfile=str(bdir / f"biasprod_{nrun}.log"),
+        dcdfile=str(bdir / f"biasprod_{nrun}.dcd"),
+        elogfile=str(bdir / f"biasprod_{nrun}.dat"),
+        forcelist=biaslist,
+    )
+    sim.write_state(str(bdir / f"biasprod_{nrun}.xml"))
+
+
+if __name__ == "__main__":
+    main()
 

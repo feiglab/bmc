@@ -60,7 +60,8 @@ touch "$lock"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 
 # call to program to do the work
-$script_dir/tileumbrella.py "$mode" "$bias" "$next" "$nstep" "$tstep" "$gamma" >"$tdir/run.out" 2>"$tdir/error.out"
+$script_dir/tileumbrella.py --mode "$mode" --bias "$bias" --run "$next" --nstep "$nstep" --tstep "$tstep" --gamma "$gamma" >"$tdir/run.out" 2>"$tdir/error.out"
+
 py_rc=$?
 
 # If python itself failed, treat as error (still allow CUDA parsing below)
