@@ -2,15 +2,21 @@
 set -euo pipefail
 
 mode=${1:-allatom}
-nsteps=${2:-1250000}
-maxrun=${3:-10}
+
+if [[ "${mode,,}" == "cocomo" ]]; then
+   nsteps=${2:-10000000}
+   maxrun=${3:-1}
+   tag=CO
+else
+   nsteps=${2:-1250000}
+   maxrun=${3:-10}
+   tag=AA
+fi
 
 if [[ -n "${4:-}" && -d "$4" ]]; then
     cd -- "$4"
 fi
 
-
-tag=US
 [[ -r tag ]] && tag=$(<tag)
 
 dir=$(pwd)
@@ -20,7 +26,7 @@ dir_esc=$(printf '%s' "$dir" | sed 's/[\/&|\\]/\\&/g')
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 sdir_esc=$(printf '%s' "$script_dir" | sed 's/[\/&|\\]/\\&/g')
 
-template=${script_dir}/job.bmctileumbrella.slurm.template
+template=${script_dir}/job.tileumbrella.slurm.template
 
 if [[ ! -r $template ]]; then
    echo "cannot find template"

@@ -60,12 +60,12 @@ touch "$lock"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 
 # call to program to do the work
-$script_dir/bmctileumbrella.py "$mode" "$bias" "$next" "$nstep" "$tstep" "$gamma" >"$tdir/run.out" 2>"$tdir/error.out"
+$script_dir/tileumbrella.py "$mode" "$bias" "$next" "$nstep" "$tstep" "$gamma" >"$tdir/run.out" 2>"$tdir/error.out"
 py_rc=$?
 
 # If python itself failed, treat as error (still allow CUDA parsing below)
 if (( py_rc != 0 )); then
-  echo "bmctileumbrella.py exited with code $py_rc" >&2
+  echo "tileumbrella.py exited with code $py_rc" >&2
 fi
 
 # Hard failure: illegal address -> don't requeue automatically

@@ -2,9 +2,10 @@
 
 # usage:
 #
-#  initbias.bmctileumbrella.allatom.py [args]
-#      args:   setup                     : setup directory
-#              equi                      : equilibration directory
+#  initbias.tileumbrella.py [args]
+#      args:   allatom                   : 'allatom' or 'cocomo' mode
+#              setup:equi                : setup/equi or working directory
+#              dimer.solvated.pdb/dimer.ca.pdb  : initial structure
 #
 #              A:B:C:D:E:F.2-91          : reference selection
 #              G:H:I:J:K:L.2-91          : other selection
@@ -29,6 +30,7 @@ import sys
 from pathlib import Path
 import numpy as np
 
+from cocomo import Assembly, COCOMO
 from mdsim import MDSim, PDBReader, StructureSelector
 
 def _argv(i: int, default: str) -> str:
@@ -64,9 +66,23 @@ def _parse_floats(s, defaults, n_out=5):
 
     return out
 
+def _find(tdir: Path, filename: str) -> Path:
+    tdir = Path(tdir).expanduser().resolve()
+
+    for d in [tdir, *tdir.parents]:
+        candidate = d / filename
+        if candidate.is_file():
+            return candidate.resolve()
+
+    cwd_candidate = Path.cwd() / filename
+    if cwd_candidate.is_file():
+        return cwd_candidate.resolve()
+
+    raise FileNotFoundError(
+        f"Could not find '{filename}' in {tdir} or its parent directories or CWD"
+    )
+
 def main() -> None:
-    default_sdir = "setup"
-    default_edir = "equi"
     default_reftile = "A:B:C:D:E:F.2-91"
     default_othertile = "G:H:I:J:K:L.2-91"
 
@@ -86,8 +102,26 @@ def main() -> None:
 
     default_device = "0"
 
-    sdir = Path(_argv(1, default_sdir)).expanduser().resolve()
-    edir = Path(_argv(2, default_edir)).expanduser().resolve()
+    mode = _argv(1,"allatom")   
+
+    if mode == 'cocomo':
+        dirstr = _argv(2,".")
+        pdb_arg = _argv(3, "dimer.ca.pdb")
+    else:
+        dirstr = _argv(2,"setup:equi")
+        pdb_arg = _argv(3, "dimer.solvated.pdb")
+
+    d=dirstr.split(":")
+    if len(d)>1: 
+        sdir = Path(d[0]).expanduser().resolve()
+        edir = Path(d[1]).expanduser().resolve()
+    else:
+        sdir = Path(dirstr).expanduser().resolve()
+        edir = sdir
+
+    sdir.mkdir(parents=True, exist_ok=True)
+    edir.mkdir(parents=True, exist_ok=True)
+    pdb_path = _find(sdir, pdb_arg)
 
     refsel = _argv(3, default_reftile)
     othersel = _argv(4, default_othertile)
@@ -145,7 +179,7 @@ def main() -> None:
     else:
         raise ValueError(f"invalid length of other selection") 
 
-    s=PDBReader(str(sdir / "dimer.solvated.pdb"))
+    s=PDBReader(str(_pdb_path))
 
     aca=StructureSelector(refsel+".CA").atom_indices(s)
     bca=StructureSelector(othersel+".CA").atom_indices(s)

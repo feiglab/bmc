@@ -18,6 +18,8 @@ nstep=int(_argv(4,"100000"))
 tstep=float(_argv(5,"0.004"))
 gamma=float(_argv(6,"0.1"))
 
+temperature=298
+
 nout=10000
 
 resources='CUDA'
@@ -43,7 +45,7 @@ if simmode.lower() == 'cocomo':
 else:
     sim=MDSim(xml=str(bdir / f"bias_system_{biasval}.xml"),restart=str(restart))
 
-sim.setup_simulation(resources=resources, temperature=298, tstep=tstep, gamma=gamma)
+sim.setup_simulation(resources=resources, temperature=temperature, tstep=tstep, gamma=gamma)
 
 biaslist=['Umbrella_x', 'Umbrella_y', 'Umbrella_z', 'Umbrella_angle_norm', 
           'Umbrella_dihedral', 'Umbrella_angle', 'Umbrella_COM']

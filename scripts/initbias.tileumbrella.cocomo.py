@@ -2,7 +2,7 @@
 
 # usage:
 #
-#  initbias.bmctileumbrella.cocomo.py [args]
+#  initbias.tileumbrella.cocomo.py [args]
 #      args:   .                         : working directory
 #              dimer.ca.pdb              : initial structure
 #
@@ -22,7 +22,7 @@
 # hexmer-pentamer:
 #    F:G:H:I:J:K.2-91 A:B:C:D:E.1-95 H:C 120:90 6.0:9.0:0.1
 # hexamer-trimer:
-#    D:E:F:G:H:I.2-91 A:B:C.19-205 D:C 60:85 6:2:9.0:0.1
+#    D:E:F:G:H:I.2-91 A:B:C.19-205 D:C 60:85 6.2:9.0:0.1
 #
 
 import sys

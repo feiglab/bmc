@@ -9,10 +9,6 @@ from cocomo import ComponentType
 from openmm.unit import kilojoule, mole, kelvin
 import numpy as np
 
-def _argv(i: int, default: str) -> str:
-    """Return argv[i] if present and non-empty; otherwise default."""
-    return sys.argv[i] if len(sys.argv) > i and str(sys.argv[i]).strip() != "" else default
-
 def main() -> None:
     types=ComponentType.read_list('component_types', dir='.')
     types['hexamer'].writeout('sasa','hexamer.surface')

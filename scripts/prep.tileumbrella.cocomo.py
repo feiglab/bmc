@@ -2,7 +2,7 @@
 
 # usage:
 #
-#  prep.bmctileumbrella.cocomo.py [args]
+#  prep.tileumbrella.cocomo.py [args]
 #      args:   .                 : directory
 #              dimer.ca.pdb      : input PDB
 #              D:E:F:G:H:I.2-91  : reference selection

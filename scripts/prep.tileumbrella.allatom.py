@@ -2,7 +2,7 @@
 
 # usage:
 #
-#  prep.bmctileumbrella.allatom.py [args]
+#  prep.tileumbrella.allatom.py [args]
 #      args:   setup             : directory
 #              dimer.pdb         : input PDB
 #              D:E:F:G:H:I.2-91  : reference selection

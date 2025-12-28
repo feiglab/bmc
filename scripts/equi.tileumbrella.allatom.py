@@ -2,7 +2,7 @@
 
 # usage:
 #
-#  equi.bmctileumbrella.allatom.py [args]
+#  equi.tileumbrella.allatom.py [args]
 #      args:   setup             : setup directory
 #              equi              : equilibration directory
 #              0                 : device
