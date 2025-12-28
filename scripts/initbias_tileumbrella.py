@@ -4,8 +4,9 @@
 #
 #  initbias.tileumbrella.py [args]
 #      args:   allatom                   : 'allatom' or 'cocomo' mode
-#              setup:equi                : setup/equi or working directory
-#              dimer.solvated.pdb/dimer.ca.pdb  : initial structure
+#              setup                     : setup directory
+#              equi                      : setup directory
+#              dimer.solvated.pdb/dimer.ca.pdb  : reference structure
 #
 #              A:B:C:D:E:F.2-91          : reference selection
 #              G:H:I:J:K:L.2-91          : other selection
@@ -102,50 +103,54 @@ def main() -> None:
 
     default_device = "0"
 
+    resources = 'CUDA'
+
     mode = _argv(1,"allatom")   
 
-    if mode == 'cocomo':
-        dirstr = _argv(2,".")
-        pdb_arg = _argv(3, "dimer.ca.pdb")
+    if mode.lower() == 'allatom':
+        initsteps=10000
+        initout=1000
+        prodsteps=5000
+        tstep=0.003
+        gamma=0.1
+    elif mode.lower() == 'cocomo':
+        initsteps=1000
+        initout=200
+        prodsteps=100
+        tstep=0.03
+        gamma=1.0
     else:
-        dirstr = _argv(2,"setup:equi")
-        pdb_arg = _argv(3, "dimer.solvated.pdb")
+        raise SystemExit(f"unknown mode {mode}")
 
-    d=dirstr.split(":")
-    if len(d)>1: 
-        sdir = Path(d[0]).expanduser().resolve()
-        edir = Path(d[1]).expanduser().resolve()
-    else:
-        sdir = Path(dirstr).expanduser().resolve()
-        edir = sdir
+    sdir = Path(_argv(2,"setup")).expanduser().resolve()
+    edir = Path(_argv(3,"equi")).expanduser().resolve()
 
-    sdir.mkdir(parents=True, exist_ok=True)
-    edir.mkdir(parents=True, exist_ok=True)
+    pdb_arg = _argv(4, "dimer.protein.pdb")
     pdb_path = _find(sdir, pdb_arg)
 
-    refsel = _argv(3, default_reftile)
-    othersel = _argv(4, default_othertile)
-    anchor = _argv(5, default_anchor).split(":")
+    refsel = _argv(5, default_reftile)
+    othersel = _argv(6, default_othertile)
+    anchor = _argv(7, default_anchor).split(":")
 
     refrot1, refrot2 = _parse_floats(
-       _argv(6, default_rotstr),
+       _argv(8, default_rotstr),
        [default_refrot, default_refrot],
        n_out=2,
     )
 
     bmin, bmax, bdel = _parse_floats(
-       _argv(7, default_bstr), 
+       _argv(9, default_bstr), 
        [default_bmin, default_bmax, default_bdel],
        n_out=3,
     )
 
     kinit, kbias, kdist, kcent, kangle = _parse_floats(
-       _argv(8, default_kstr), 
+       _argv(10, default_kstr), 
        [default_kinit, default_kbias],
        n_out=5,
     )
     
-    device = _as_int("device", _argv(9, default_device))
+    device = _as_int("device", _argv(11, default_device))
 
     base, dot, suffix = refsel.partition(".")
     tiles = base.split(":")
@@ -179,7 +184,7 @@ def main() -> None:
     else:
         raise ValueError(f"invalid length of other selection") 
 
-    s=PDBReader(str(_pdb_path))
+    s=PDBReader(str(pdb_path))
 
     aca=StructureSelector(refsel+".CA").atom_indices(s)
     bca=StructureSelector(othersel+".CA").atom_indices(s)
@@ -194,14 +199,17 @@ def main() -> None:
     bca2=StructureSelector(bsel2+".CA").atom_indices(s)
     bcat1=StructureSelector(bselt+".CA").atom_indices(s)
 
-    restart=edir / "equi_298npt.xml"
+    restart=edir / "equi_final.xml"
     for biasval in np.arange(bmin, bmax+1.0E-8, bdel):
        tag=f"{biasval:.2f}"
 
        bdir=Path(f"run_{tag}")
        bdir.mkdir(parents=True, exist_ok=True)
 
-       sim=MDSim(xml=str(sdir / "system.xml"),restart=str(restart))
+       if mode.lower() == 'allatom':
+           sim=MDSim(xml=str(sdir / "system.xml"),restart=str(restart))
+       elif mode.lower() == 'cocomo':
+           sim=COCOMO(xml=str(sdir / "system.xml"),restart=str(restart),version=2)
 
        sim.set_umbrella_xyz_distance(aca,bca,direction="x",target=biasval,k=kinit)
        sim.set_umbrella_xyz_distance(aca,bca,direction="y",target=0.0,k=kinit)
@@ -215,10 +223,11 @@ def main() -> None:
 
        sim.write_system(str(bdir / f"bias_system_{tag}.xml"))
 
-       sim.setup_simulation(resources='CUDA', device=device, temperature=298, tstep=0.003, gamma=0.1)
-       sim.simulate(nstep=10000,nout=1000,
+       sim.setup_simulation(resources=resources, device=device, temperature=298, tstep=tstep, gamma=gamma)
+       sim.simulate(nstep=initsteps,nout=initout,
                     logfile = str(bdir / f"biasinit_{tag}.log"),
                     dcdfile = str(bdir / f"biasinit_{tag}.dcd"))
+
        biasinitxml = bdir / f"biasinit_{tag}.xml"
        sim.write_state(str(biasinitxml))
 
@@ -230,7 +239,8 @@ def main() -> None:
        sim.update_umbrella_dihedral(kangle)
        sim.update_umbrella_angle(kangle)
 
-       sim.simulate(nstep=5000,logfile=str(bdir / f"biasprod_0.log"))
+       sim.simulate(nstep=prodsteps,logfile=str(bdir / f"biasprod_0.log"))
+
        biasprodxml=bdir / f"biasprod_0.xml"
        sim.write_state(str(biasprodxml))
 
