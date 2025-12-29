@@ -18,6 +18,7 @@ from pathlib import Path
 import numpy as np
 from cocomo import COCOMO
 from mdsim import MDSim, PDBReader, StructureSelector
+from tile_config import format_value, read_config, write_config
 
 
 def _as_int(name: str, s: str) -> int:
@@ -108,6 +109,18 @@ def _build_anchor_selections(refsel: str, othersel: str, anchor: str) -> tuple[s
     return asel1, asel2, aselt, bsel1, bsel2, bselt
 
 
+def _parse_config_args(argv: Sequence[str] | None = None) -> Path:
+    p = argparse.ArgumentParser(add_help=False)
+    p.add_argument(
+        "--config",
+        type=Path,
+        default=Path("config"),
+        help="Config file (key/value) to read/write",
+    )
+    ns, _ = p.parse_known_args(argv)
+    return Path(ns.config)
+
+
 @dataclass(frozen=True)
 class ModeParams:
     initsteps: int
@@ -141,7 +154,45 @@ def _mode_params(mode: str) -> ModeParams:
     raise SystemExit(f"ERROR: unknown mode {mode!r}")
 
 
-def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+def _apply_config_defaults(
+    p: argparse.ArgumentParser,
+    cfg: dict[str, str],
+) -> None:
+    defaults: dict[str, object] = {}
+
+    if "mode" in cfg:
+        defaults["mode"] = cfg["mode"]
+    if "setup" in cfg:
+        defaults["setup"] = Path(cfg["setup"])
+    if "equi" in cfg:
+        defaults["equi"] = Path(cfg["equi"])
+    if "pdb" in cfg:
+        defaults["pdb"] = cfg["pdb"]
+    if "refsel" in cfg:
+        defaults["refsel"] = cfg["refsel"]
+    if "othersel" in cfg:
+        defaults["othersel"] = cfg["othersel"]
+    if "anchor" in cfg:
+        defaults["anchor"] = cfg["anchor"]
+    if "rot" in cfg:
+        defaults["rot"] = cfg["rot"]
+    if "bias" in cfg:
+        defaults["bias"] = cfg["bias"]
+    if "k" in cfg:
+        defaults["k"] = cfg["k"]
+    if "device" in cfg:
+        defaults["device"] = int(cfg["device"])
+    if "resources" in cfg:
+        defaults["resources"] = cfg["resources"]
+
+    if defaults:
+        p.set_defaults(**defaults)
+
+
+def _parse_args(
+    cfg: dict[str, str],
+    argv: Sequence[str] | None = None,
+) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="initbias_tileumbrella.py",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -217,15 +268,49 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p.add_argument("--device", type=int, default=0, help="Device index")
     p.add_argument("--resources", type=str, default="CUDA", help="OpenMM platform name")
 
+    p.add_argument(
+        "--config",
+        type=Path,
+        default=Path("config"),
+        help="Config file (key/value) to read/write",
+    )
+    p.add_argument(
+        "--no-write-config",
+        dest="write_config",
+        action="store_false",
+        help="Disable writing updated config values",
+    )
+    p.set_defaults(write_config=True)
+
+    _apply_config_defaults(p, cfg)
     return p.parse_args(argv)
 
 
 def main() -> None:
-    args = _parse_args()
+    cfg_path = _parse_config_args()
+    cfg = read_config(cfg_path)
+
+    args = _parse_args(cfg)
     params = _mode_params(str(args.mode))
 
     sdir = Path(args.setup).expanduser().resolve()
     edir = Path(args.equi).expanduser().resolve()
+
+    cfg_path = Path(args.config)
+    if bool(args.write_config):
+        cfg["mode"] = format_value(str(args.mode).lower())
+        cfg["setup"] = format_value(args.setup)
+        cfg["equi"] = format_value(args.equi)
+        cfg["pdb"] = format_value(args.pdb)
+        cfg["refsel"] = format_value(args.refsel)
+        cfg["othersel"] = format_value(args.othersel)
+        cfg["anchor"] = format_value(args.anchor)
+        cfg["rot"] = format_value(args.rot)
+        cfg["bias"] = format_value(args.bias)
+        cfg["k"] = format_value(args.k)
+        cfg["device"] = format_value(int(args.device))
+        cfg["resources"] = format_value(str(args.resources))
+        write_config(cfg_path, cfg)
 
     pdb_path = _find(sdir, str(args.pdb))
     s = PDBReader(str(pdb_path))
@@ -319,7 +404,9 @@ def main() -> None:
         sim.update_umbrella_angle(kangle)
 
         sim.simulate(
-            nstep=params.prodsteps, nout=params.prodout, logfile=str(bdir / "biasprod_0.log")
+            nstep=params.prodsteps,
+            nout=params.prodout,
+            logfile=str(bdir / "biasprod_0.log"),
         )
 
         sim.write_state(str(bdir / "biasprod_0.xml"))

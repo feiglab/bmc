@@ -7,9 +7,48 @@ from pathlib import Path
 
 from cocomo import COCOMO
 from mdsim import MDSim, PDBReader
+from tile_config import format_value, read_config, write_config
 
 
-def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+def _parse_config_args(argv: Sequence[str] | None = None) -> Path:
+    p = argparse.ArgumentParser(add_help=False)
+    p.add_argument(
+        "--config",
+        type=Path,
+        default=Path("config"),
+        help="Config file (key/value) to read/write",
+    )
+    ns, _ = p.parse_known_args(argv)
+    return Path(ns.config)
+
+
+def _apply_config_defaults(
+    p: argparse.ArgumentParser,
+    cfg: dict[str, str],
+) -> None:
+    defaults: dict[str, object] = {}
+
+    if "mode" in cfg:
+        defaults["mode"] = cfg["mode"]
+    if "setup" in cfg:
+        defaults["setup"] = Path(cfg["setup"])
+    if "equi" in cfg:
+        defaults["equi"] = Path(cfg["equi"])
+    if "pdb" in cfg:
+        defaults["pdb"] = Path(cfg["pdb"])
+    if "device" in cfg:
+        defaults["device"] = int(cfg["device"])
+    if "resources" in cfg:
+        defaults["resources"] = cfg["resources"]
+
+    if defaults:
+        p.set_defaults(**defaults)
+
+
+def _parse_args(
+    cfg: dict[str, str],
+    argv: Sequence[str] | None = None,
+) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="equi_tileumbrella.py",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -72,11 +111,29 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="OpenMM platform/resources string",
     )
 
+    p.add_argument(
+        "--config",
+        type=Path,
+        default=Path("config"),
+        help="Config file (key/value) to read/write",
+    )
+    p.add_argument(
+        "--no-write-config",
+        dest="write_config",
+        action="store_false",
+        help="Disable writing updated config values",
+    )
+    p.set_defaults(write_config=True)
+
+    _apply_config_defaults(p, cfg)
     return p.parse_args(argv)
 
 
 def main() -> None:
-    args = _parse_args()
+    cfg_path = _parse_config_args()
+    cfg = read_config(cfg_path)
+
+    args = _parse_args(cfg)
 
     mode = str(args.mode).lower()
     sdir = Path(args.setup).expanduser().resolve()
@@ -88,6 +145,16 @@ def main() -> None:
         refpdb = Path("dimer.solvated.pdb") if mode == "allatom" else Path("dimer.protein.pdb")
     else:
         refpdb = Path(args.pdb)
+
+    cfg_path = Path(args.config)
+    if bool(args.write_config):
+        cfg["mode"] = format_value(mode)
+        cfg["setup"] = format_value(args.setup)
+        cfg["equi"] = format_value(args.equi)
+        cfg["pdb"] = format_value(refpdb)
+        cfg["device"] = format_value(device)
+        cfg["resources"] = format_value(resources)
+        write_config(cfg_path, cfg)
 
     edir.mkdir(parents=True, exist_ok=True)
 

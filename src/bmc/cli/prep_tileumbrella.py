@@ -26,6 +26,7 @@ from mdsim import (
     solvate,
 )
 from openmm.unit import nanometer
+from tile_config import format_value, parse_bool, read_config, split_values, write_config
 
 
 def _as_float(name: str, s: str) -> float:
@@ -52,6 +53,18 @@ def _find(tdir: Path, filename: str) -> Path:
     raise FileNotFoundError(
         f"Could not find '{filename}' in {tdir} or its parent directories or CWD"
     )
+
+
+def _parse_config_args(argv: Sequence[str] | None = None) -> Path:
+    p = argparse.ArgumentParser(add_help=False)
+    p.add_argument(
+        "--config",
+        type=Path,
+        default=Path("config"),
+        help="Config file (key/value) to read/write",
+    )
+    ns, _ = p.parse_known_args(argv)
+    return Path(ns.config)
 
 
 @dataclass(frozen=True)
@@ -97,7 +110,39 @@ def _validate_forcefields(ff: Sequence[str]) -> None:
         raise SystemExit(msg)
 
 
-def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+def _apply_config_defaults(
+    p: argparse.ArgumentParser,
+    cfg: dict[str, str],
+) -> None:
+    defaults: dict[str, object] = {}
+
+    if "mode" in cfg:
+        defaults["mode"] = cfg["mode"]
+    if "setup" in cfg:
+        defaults["setup"] = Path(cfg["setup"])
+    if "pdb_in" in cfg:
+        defaults["pdb"] = cfg["pdb_in"]
+    if "refsel" in cfg:
+        defaults["refsel"] = cfg["refsel"]
+    if "othersel" in cfg:
+        defaults["othersel"] = cfg["othersel"]
+    if "box" in cfg:
+        defaults["box"] = cfg["box"]
+    if "conc" in cfg:
+        defaults["conc"] = float(cfg["conc"])
+    if "orient" in cfg:
+        defaults["orient"] = parse_bool(cfg["orient"])
+    if "ff" in cfg:
+        defaults["ff"] = split_values(cfg["ff"])
+
+    if defaults:
+        p.set_defaults(**defaults)
+
+
+def _parse_args(
+    cfg: dict[str, str],
+    argv: Sequence[str] | None = None,
+) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="prep_tileumbrella.py",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -182,6 +227,22 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=None,
         help="OpenMM forcefield XMLs (allatom only).",
     )
+
+    p.add_argument(
+        "--config",
+        type=Path,
+        default=Path("config"),
+        help="Config file (key/value) to read/write",
+    )
+    p.add_argument(
+        "--no-write-config",
+        dest="write_config",
+        action="store_false",
+        help="Disable writing updated config values",
+    )
+    p.set_defaults(write_config=True)
+
+    _apply_config_defaults(p, cfg)
     return p.parse_args(argv)
 
 
@@ -194,7 +255,10 @@ def _split_reftile(refsel: str) -> list[str]:
 
 
 def main() -> None:
-    args = _parse_args()
+    cfg_path = _parse_config_args()
+    cfg = read_config(cfg_path)
+
+    args = _parse_args(cfg)
 
     mode = str(args.mode).lower()
     tdir = Path(args.setup).expanduser().resolve()
@@ -213,9 +277,24 @@ def main() -> None:
     box_nm = _parse_box_nm(box_str)
     boxx, boxy, boxz = box_nm.as_units()
 
+    ff_val: list[str] | None = None
     if mode == "allatom":
-        ff = _default_forcefields() if args.ff is None else _expand_forcefields(args.ff)
-        _validate_forcefields(ff)
+        ff_val = _default_forcefields() if args.ff is None else _expand_forcefields(args.ff)
+        _validate_forcefields(ff_val)
+
+    cfg_path = Path(args.config)
+    if bool(args.write_config):
+        cfg["mode"] = format_value(mode)
+        cfg["setup"] = format_value(args.setup)
+        cfg["pdb_in"] = format_value(pdb_arg)
+        cfg["refsel"] = format_value(args.refsel)
+        cfg["othersel"] = format_value(args.othersel)
+        cfg["box"] = format_value(box_str)
+        cfg["conc"] = format_value(args.conc)
+        cfg["orient"] = format_value(bool(args.orient))
+        if ff_val is not None:
+            cfg["ff"] = format_value(ff_val)
+        write_config(cfg_path, cfg)
 
     pdb_path = _find(tdir, pdb_arg)
     s = PDBReader(str(pdb_path))
@@ -270,7 +349,7 @@ def main() -> None:
         solvated.write_pdb(str(tdir / "dimer.solvated.pdb"))
         sim = MDSim(
             model=solvated,
-            ff=ff,
+            ff=ff_val,
             box=(boxx, boxy, boxz),
             hmass=True,
             switching="openmm",
