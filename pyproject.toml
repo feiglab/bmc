@@ -24,10 +24,10 @@ dependencies = [
 
 [project.scripts]
 tileumbrella = "bmc.cli.tileumbrella:main"
-prep-tileumbrella = "bmc.cli.prep_tileumbrella:main"
-equi-tileumbrella = "bmc.cli.equi_tileumbrella:main"
-initbias-tileumbrella = "bmc.cli.initbias_tileumbrella:main"
-calc-comp-cocomo = "bmc.cli.calc_comp_cocomo:main"
+prep_tileumbrella = "bmc.cli.prep_tileumbrella:main"
+equi_tileumbrella = "bmc.cli.equi_tileumbrella:main"
+initbias_tileumbrella = "bmc.cli.initbias_tileumbrella:main"
+calc_comp_cocomo = "bmc.cli.calc_comp_cocomo:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
