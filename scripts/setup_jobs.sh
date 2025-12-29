@@ -1,20 +1,35 @@
 #!/bin/bash
 set -euo pipefail
 
-mode=${1:-allatom}
+mode_arg=${1:-}
+nsteps_arg=${2:-}
+maxrun_arg=${3:-}
+workdir_arg=${4:-}
 
-if [[ "${mode,,}" == "cocomo" ]]; then
-   nsteps=${2:-10000000}
-   maxrun=${3:-1}
-   tag=CO
-else
-   nsteps=${2:-1250000}
-   maxrun=${3:-10}
-   tag=AA
+if [[ -n "$workdir_arg" && -d "$workdir_arg" ]]; then
+    cd -- "$workdir_arg"
 fi
 
-if [[ -n "${4:-}" && -d "$4" ]]; then
-    cd -- "$4"
+default_mode=allatom
+if [[ -r config ]]; then
+    cfg_mode=$(
+        awk '$1=="mode" && NF>=2 { print $2; exit }' config
+    )
+    if [[ -n "${cfg_mode:-}" ]]; then
+        default_mode=$cfg_mode
+    fi
+fi
+
+mode=${mode_arg:-$default_mode}
+
+if [[ "${mode,,}" == "cocomo" ]]; then
+   nsteps=${nsteps_arg:-10000000}
+   maxrun=${maxrun_arg:-1}
+   tag=CO
+else
+   nsteps=${nsteps_arg:-1250000}
+   maxrun=${maxrun_arg:-10}
+   tag=AA
 fi
 
 [[ -r tag ]] && tag=$(<tag)
