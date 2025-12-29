@@ -35,12 +35,8 @@ def _apply_config_defaults(
         defaults["setup"] = Path(cfg["setup"])
     if "equi" in cfg:
         defaults["equi"] = Path(cfg["equi"])
-    if "pdb" in cfg:
-        defaults["pdb"] = Path(cfg["pdb"])
-    if "device" in cfg:
-        defaults["device"] = int(cfg["device"])
-    if "resources" in cfg:
-        defaults["resources"] = cfg["resources"]
+    if "refpdb" in cfg:
+        defaults["refpdb"] = Path(cfg["refpdb"])
 
     if defaults:
         p.set_defaults(**defaults)
@@ -91,7 +87,7 @@ def _parse_args(
         help="Equilibration output directory",
     )
     p.add_argument(
-        "--pdb",
+        "--refpdb",
         type=Path,
         default=None,
         help=(
@@ -142,19 +138,17 @@ def main() -> None:
     resources = str(args.resources)
     device = int(args.device)
 
-    if args.pdb is None:
+    if args.refpdb is None:
         refpdb = Path("dimer.solvated.pdb") if mode == "allatom" else Path("dimer.protein.pdb")
     else:
-        refpdb = Path(args.pdb)
+        refpdb = Path(args.refpdb)
 
     cfg_path = Path(args.config)
     if bool(args.write_config):
         cfg["mode"] = format_value(mode)
         cfg["setup"] = format_value(args.setup)
         cfg["equi"] = format_value(args.equi)
-        cfg["pdb"] = format_value(refpdb)
-        cfg["device"] = format_value(device)
-        cfg["resources"] = format_value(resources)
+        cfg["refpdb"] = format_value(refpdb)
         write_config(cfg_path, cfg)
 
     edir.mkdir(parents=True, exist_ok=True)

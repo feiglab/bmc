@@ -83,14 +83,14 @@ _ORDER = [
     "k",
     "setup",
     "equi",
-    "pdb",
     "pdb_in",
+    "refpdb",
+    "capdb",
+    "cadcd",
     "box",
     "conc",
     "orient",
     "ff",
-    "device",
-    "resources",
 ]
 
 

@@ -160,8 +160,8 @@ def _apply_config_defaults(
         defaults["setup"] = Path(cfg["setup"])
     if "equi" in cfg:
         defaults["equi"] = Path(cfg["equi"])
-    if "pdb" in cfg:
-        defaults["pdb"] = cfg["pdb"]
+    if "refpdb" in cfg:
+        defaults["refpdb"] = cfg["refpdb"]
     if "refsel" in cfg:
         defaults["refsel"] = cfg["refsel"]
     if "othersel" in cfg:
@@ -174,10 +174,6 @@ def _apply_config_defaults(
         defaults["bias"] = cfg["bias"]
     if "k" in cfg:
         defaults["k"] = cfg["k"]
-    if "device" in cfg:
-        defaults["device"] = int(cfg["device"])
-    if "resources" in cfg:
-        defaults["resources"] = cfg["resources"]
 
     if defaults:
         p.set_defaults(**defaults)
@@ -217,7 +213,7 @@ def _parse_args(
     p.add_argument("--setup", type=Path, default=Path("setup"), help="Setup directory")
     p.add_argument("--equi", type=Path, default=Path("equi"), help="Equi directory")
     p.add_argument(
-        "--pdb",
+        "--refpdb",
         type=str,
         default="dimer.protein.pdb",
         help="Reference PDB (searched relative to --setup and parents, then CWD)",
@@ -295,18 +291,16 @@ def main() -> None:
         cfg["mode"] = format_value(str(args.mode).lower())
         cfg["setup"] = format_value(args.setup)
         cfg["equi"] = format_value(args.equi)
-        cfg["pdb"] = format_value(args.pdb)
+        cfg["refpdb"] = format_value(args.refpdb)
         cfg["refsel"] = format_value(args.refsel)
         cfg["othersel"] = format_value(args.othersel)
         cfg["anchor"] = format_value(args.anchor)
         cfg["rot"] = format_value(args.rot)
         cfg["bias"] = format_value(args.bias)
         cfg["k"] = format_value(args.k)
-        cfg["device"] = format_value(int(args.device))
-        cfg["resources"] = format_value(str(args.resources))
         write_config(cfg_path, cfg)
 
-    pdb_path = _find(sdir, str(args.pdb))
+    pdb_path = _find(sdir, str(args.refpdb))
     s = PDBReader(str(pdb_path))
 
     refsel = str(args.refsel)

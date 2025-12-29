@@ -82,6 +82,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Output/report interval (steps)",
     )
     p.add_argument(
+        "--device",
+        type=int,
+        default=0,
+        help="OpenMM resource device index",
+    )
+    p.add_argument(
         "--resources",
         type=str,
         default="CUDA",
@@ -132,6 +138,7 @@ def main() -> None:
 
     sim.setup_simulation(
         resources=str(args.resources),
+        device=int(args.device),
         temperature=float(args.temperature),
         tstep=float(args.tstep),
         gamma=float(args.gamma),
