@@ -133,6 +133,8 @@ def _apply_config_defaults(
         defaults["rot"] = cfg["rot"]
     if "k" in cfg:
         defaults["k"] = cfg["k"]
+    if "bias" in cfg:
+        defaults["bias"] = cfg["bias"]
 
     if defaults:
         p.set_defaults(**defaults)
