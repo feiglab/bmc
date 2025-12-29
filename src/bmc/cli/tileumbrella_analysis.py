@@ -224,7 +224,6 @@ def main() -> None:
 
     cfg_path = Path(args.config)
     if bool(args.write_config):
-        cfg["pdb"] = format_value(args.pdb)
         cfg["capdb"] = format_value(args.capdb)
         cfg["cadcd"] = format_value(args.cadcd)
         cfg["refsel"] = format_value(args.refsel)
