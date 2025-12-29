@@ -43,7 +43,7 @@ for n in run_?.??; do
       last="$(< last)"
     fi
 
-    qcount="$(squeue -h 2>/dev/null | grep -F "$bias" | wc -l | tr -d ' ')"
+    qcount="$(squeue -h 2>/dev/null | grep -F -c "$bias" || true)"
     lastline="$(tail -n 1 "$newest_log" 2>/dev/null | tr -d '\r' || echo "-")"
 
     printf "%s %s %s %s %s %s %s\n" \
