@@ -33,11 +33,11 @@ calc_comp_cocomo = "bmc.cli.calc_comp_cocomo:main"
 [tool.setuptools]
 package-dir = {"" = "src"}
 script-files = [
-  "scripts/check_jobs.sh",
+  "scripts/check_tileumbrella_jobs.sh",
   "scripts/combine_tileumbrella.sh",
   "scripts/run_tileumbrella.sh",
-  "scripts/setup_jobs.sh",
-  "scripts/submit_jobs.sh",
+  "scripts/setup_tileumbrella_jobs.sh",
+  "scripts/submit_tileumbrella_jobs.sh",
   "scripts/job.tileumbrella.slurm.template",
 ]
 
