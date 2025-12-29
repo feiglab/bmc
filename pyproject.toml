@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bmc"
+version = "1.0.0"
+description = "BMC tile analysis and tile umbrella workflows"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+
+dependencies = [
+  "numpy",
+  "pandas",
+  "scipy",
+  "matplotlib",
+  "mdtraj",
+  "gemmi",
+  "pymbar",
+  "mdsim @ git+https://github.com/feiglab/mdsim.git",
+  "cocomo @ git+https://github.com/feiglab/cocomo.git",
+]
+
+[project.scripts]
+tileumbrella = "bmc.cli.tileumbrella:main"
+prep-tileumbrella = "bmc.cli.prep_tileumbrella:main"
+equi-tileumbrella = "bmc.cli.equi_tileumbrella:main"
+initbias-tileumbrella = "bmc.cli.initbias_tileumbrella:main"
+calc-comp-cocomo = "bmc.cli.calc_comp_cocomo:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+script-files = [
+  "scripts/check_jobs.sh",
+  "scripts/combine_tileumbrella.sh",
+  "scripts/run_tileumbrella.sh",
+  "scripts/run_tileumbrella_analysis.sh",
+  "scripts/setup_jobs.sh",
+  "scripts/submit_jobs.sh",
+  "scripts/job.tileumbrella.slurm.template",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
