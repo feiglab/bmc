@@ -24,7 +24,7 @@ dir=$(pwd)
 dir_esc=$(printf '%s' "$dir" | sed 's/[\/&|\\]/\\&/g')
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-sdir_esc=$(printf '%s' "$script_dir" | sed 's/[\/&|\\]/\\&/g')
+#sdir_esc=$(printf '%s' "$script_dir" | sed 's/[\/&|\\]/\\&/g')
 
 template=${script_dir}/job.tileumbrella.slurm.template
 
@@ -46,7 +46,6 @@ for n in run_?.??; do
     -e "s|DIR|$dir_esc|g" \
     -e "s/TAG/$tag/g" \
     -e "s/NSTEPS/$nsteps/g" \
-    -e "s|SCRIPT|$sdir_esc|g" \
     $template > "$n/job.prodbias.slurm"
 done
 

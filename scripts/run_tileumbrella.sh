@@ -57,10 +57,10 @@ rm -f "$tdir/requeue"
 : > "$tdir/error.out"
 touch "$lock"
 
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+#script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 
 # call to program to do the work
-$script_dir/tileumbrella.py --mode "$mode" --bias "$bias" --run "$next" --nstep "$nstep" --tstep "$tstep" --gamma "$gamma" >"$tdir/run.out" 2>"$tdir/error.out"
+tileumbrella.py --mode "$mode" --bias "$bias" --run "$next" --nstep "$nstep" --tstep "$tstep" --gamma "$gamma" >"$tdir/run.out" 2>"$tdir/error.out"
 
 py_rc=$?
 
