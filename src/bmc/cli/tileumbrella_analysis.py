@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
-#
-# hexamer-hexamer:
-#    A:B:C:D:E:F.2-91 G:H:I:J:K:L.2-91 A:G 90:90 6.0:9.0:0.1
-# hexmer-pentamer:
-#    F:G:H:I:J:K.2-91 A:B:C:D:E.1-95 H:C 120:90 6.0:9.0:0.1
-# hexamer-trimer:
-#    D:E:F:G:H:I.2-91 A:B:C.19-205 D:C 60:85 6.2:9.0:0.1
-#
 
 from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from cocomo import COCOMO
-from mdsim import MDSim, PDBReader, StructureSelector
+from mdsim import (
+    PDBReader,
+    StructureSelector,
+    harmonic_energy_angle,
+    harmonic_energy_dihedral,
+    harmonic_energy_xyz,
+    load_dcd,
+)
+from openmm.unit import degrees, kilojoule, mole, nanometer, radian
 
 from .tile_config import format_value, read_config, write_config
 
@@ -115,69 +113,26 @@ def _parse_config_args(argv: Sequence[str] | None = None) -> Path:
     return Path(ns.config)
 
 
-@dataclass(frozen=True)
-class ModeParams:
-    initsteps: int
-    initout: int
-    prodsteps: int
-    prodout: int
-    tstep: float
-    gamma: float
-
-
-def _mode_params(mode: str) -> ModeParams:
-    m = mode.lower()
-    if m == "allatom":
-        return ModeParams(
-            initsteps=10000,
-            initout=1000,
-            prodsteps=5000,
-            prodout=1000,
-            tstep=0.003,
-            gamma=0.1,
-        )
-    if m == "cocomo":
-        return ModeParams(
-            initsteps=1000,
-            initout=200,
-            prodsteps=200,
-            prodout=100,
-            tstep=0.03,
-            gamma=1.0,
-        )
-    raise SystemExit(f"ERROR: unknown mode {mode!r}")
-
-
 def _apply_config_defaults(
     p: argparse.ArgumentParser,
     cfg: dict[str, str],
 ) -> None:
     defaults: dict[str, object] = {}
 
-    if "mode" in cfg:
-        defaults["mode"] = cfg["mode"]
-    if "setup" in cfg:
-        defaults["setup"] = Path(cfg["setup"])
-    if "equi" in cfg:
-        defaults["equi"] = Path(cfg["equi"])
-    if "pdb" in cfg:
-        defaults["pdb"] = cfg["pdb"]
     if "refsel" in cfg:
         defaults["refsel"] = cfg["refsel"]
     if "othersel" in cfg:
         defaults["othersel"] = cfg["othersel"]
     if "anchor" in cfg:
         defaults["anchor"] = cfg["anchor"]
+    if "capdb" in cfg:
+        defaults["capdb"] = cfg["capdb"]
+    if "cadcd" in cfg:
+        defaults["cadcd"] = cfg["cadcd"]
     if "rot" in cfg:
         defaults["rot"] = cfg["rot"]
-    if "bias" in cfg:
-        defaults["bias"] = cfg["bias"]
     if "k" in cfg:
         defaults["k"] = cfg["k"]
-    if "device" in cfg:
-        defaults["device"] = int(cfg["device"])
-    if "resources" in cfg:
-        defaults["resources"] = cfg["resources"]
 
     if defaults:
         p.set_defaults(**defaults)
@@ -192,35 +147,18 @@ def _parse_args(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
-    mode_grp = p.add_mutually_exclusive_group()
-    mode_grp.add_argument(
-        "--mode",
-        choices=["allatom", "cocomo"],
-        default="allatom",
-        help="Simulation mode",
-    )
-    mode_grp.add_argument(
-        "--allatom",
-        dest="mode",
-        action="store_const",
-        const="allatom",
-        help="Shortcut for --mode allatom",
-    )
-    mode_grp.add_argument(
-        "--cocomo",
-        dest="mode",
-        action="store_const",
-        const="cocomo",
-        help="Shortcut for --mode cocomo",
+    p.add_argument(
+        "--capdb",
+        type=str,
+        default="CA.pdb",
+        help="Reference PDB (CA only)",
     )
 
-    p.add_argument("--setup", type=Path, default=Path("setup"), help="Setup directory")
-    p.add_argument("--equi", type=Path, default=Path("equi"), help="Equi directory")
     p.add_argument(
-        "--pdb",
+        "--cadcd",
         type=str,
-        default="dimer.protein.pdb",
-        help="Reference PDB (searched relative to --setup and parents, then CWD)",
+        default="ca.dcd",
+        help="Reference PDB (CA only)",
     )
 
     p.add_argument(
@@ -259,8 +197,6 @@ def _parse_args(
         default="500:200",
         help="Force constants as 'kinit:kbias[:kdist[:kcent[:kangle]]]'",
     )
-    p.add_argument("--device", type=int, default=0, help="Device index")
-    p.add_argument("--resources", type=str, default="CUDA", help="OpenMM platform name")
 
     p.add_argument(
         "--config",
@@ -285,29 +221,25 @@ def main() -> None:
     cfg = read_config(cfg_path)
 
     args = _parse_args(cfg)
-    params = _mode_params(str(args.mode))
-
-    sdir = Path(args.setup).expanduser().resolve()
-    edir = Path(args.equi).expanduser().resolve()
 
     cfg_path = Path(args.config)
     if bool(args.write_config):
-        cfg["mode"] = format_value(str(args.mode).lower())
-        cfg["setup"] = format_value(args.setup)
-        cfg["equi"] = format_value(args.equi)
         cfg["pdb"] = format_value(args.pdb)
+        cfg["capdb"] = format_value(args.capdb)
+        cfg["cadcd"] = format_value(args.cadcd)
         cfg["refsel"] = format_value(args.refsel)
         cfg["othersel"] = format_value(args.othersel)
         cfg["anchor"] = format_value(args.anchor)
         cfg["rot"] = format_value(args.rot)
         cfg["bias"] = format_value(args.bias)
         cfg["k"] = format_value(args.k)
-        cfg["device"] = format_value(int(args.device))
-        cfg["resources"] = format_value(str(args.resources))
         write_config(cfg_path, cfg)
 
-    pdb_path = _find(sdir, str(args.pdb))
-    s = PDBReader(str(pdb_path))
+    pdb_path = _find(".", str(args.capdb))
+    s = PDBReader(str(pdb_path)).select_CA()
+
+    dcd_path = _find(".", str(args.cadcd))
+    traj = load_dcd(str(dcd_path), s)
 
     refsel = str(args.refsel)
     othersel = str(args.othersel)
@@ -321,10 +253,6 @@ def main() -> None:
         n_out=5,
     )
 
-    device = int(args.device)
-    resources = str(args.resources)
-
-    reftile = _split_tile_sel(refsel)
     asel1, asel2, aselt, bsel1, bsel2, bselt = _build_anchor_selections(
         refsel=refsel,
         othersel=othersel,
@@ -334,8 +262,6 @@ def main() -> None:
     aca = StructureSelector(refsel + ".CA").atom_indices(s)
     bca = StructureSelector(othersel + ".CA").atom_indices(s)
 
-    rc = [StructureSelector(t + ".CA").atom_indices(s) for t in reftile]
-
     aca1 = StructureSelector(asel1 + ".CA").atom_indices(s)
     aca2 = StructureSelector(asel2 + ".CA").atom_indices(s)
     acat1 = StructureSelector(aselt + ".CA").atom_indices(s)
@@ -344,68 +270,75 @@ def main() -> None:
     bca2 = StructureSelector(bsel2 + ".CA").atom_indices(s)
     bcat1 = StructureSelector(bselt + ".CA").atom_indices(s)
 
-    restart = edir / "equi_final.xml"
-    mode = str(args.mode).lower()
+    distance_vector = traj.distance_vector(aca, bca)
+    angle_norm = traj.angle_norm(aca, aca1, aca2, bca, bca1, bca2)
+    dihedral = traj.dihedral(acat1, aca, bca, bcat1)
+    angle1 = traj.angle(aca, bca, bcat1)
+    angle2 = traj.angle(acat1, aca, bca)
+
+    biasy = harmonic_energy_xyz(
+        distance_vector, kdist * kilojoule / mole / nanometer**2, 0.0 * nanometer, axis="y"
+    )
+    biasz = harmonic_energy_xyz(
+        distance_vector, kdist * kilojoule / mole / nanometer**2, 0.0 * nanometer, axis="z"
+    )
+    biasnorm = harmonic_energy_angle(
+        angle_norm, kangle * kilojoule / mole / radian**2, 0.0 * radian
+    )
+    biastwist = harmonic_energy_dihedral(
+        dihedral, kangle * kilojoule / mole / radian**2, 0.0 * radian
+    )
+    biasangle1 = harmonic_energy_angle(
+        angle1, kangle * kilojoule / mole / radian**2, np.radians(refrot1) * radian
+    )
+    biasangle2 = harmonic_energy_angle(
+        angle2, kangle * kilojoule / mole / radian**2, np.radians(refrot2) * radian
+    )
 
     for biasval in np.arange(bmin, bmax + 1.0e-8, bdel):
         tag = f"{biasval:.2f}"
 
         bdir = Path(f"run_{tag}")
-        bdir.mkdir(parents=True, exist_ok=True)
 
-        if mode == "allatom":
-            sim = MDSim(xml=str(sdir / "system.xml"), restart=str(restart))
-        elif mode == "cocomo":
-            sim = COCOMO(xml=str(sdir / "system.xml"), restart=str(restart), version=2)
-        else:
-            raise SystemExit(f"ERROR: unknown mode {mode!r}")
-
-        sim.set_umbrella_xyz_distance(aca, bca, direction="x", target=biasval, k=kinit)
-        sim.set_umbrella_xyz_distance(aca, bca, direction="y", target=0.0, k=kinit)
-        sim.set_umbrella_xyz_distance(aca, bca, direction="z", target=0.0, k=kinit)
-        sim.set_umbrella_center(rc, k=kinit)
-        sim.set_umbrella_angle_norm(aca, aca1, aca2, bca, bca1, bca2, k=kinit)
-        sim.set_umbrella_dihedral(acat1, aca, bca, bcat1, k=kinit)
-        sim.set_umbrella_angle(aca, bca, bcat1, target=np.radians(refrot1), k=kinit)
-        sim.set_umbrella_angle(acat1, aca, bca, target=np.radians(refrot2), k=kinit)
-        sim.set_force_groups()
-
-        sim.write_system(str(bdir / f"bias_system_{tag}.xml"))
-
-        sim.setup_simulation(
-            resources=resources,
-            device=device,
-            temperature=298,
-            tstep=params.tstep,
-            gamma=params.gamma,
-        )
-        sim.simulate(
-            nstep=params.initsteps,
-            nout=params.initout,
-            logfile=str(bdir / f"biasinit_{tag}.log"),
-            dcdfile=str(bdir / f"biasinit_{tag}.dcd"),
+        biasx = harmonic_energy_xyz(
+            distance_vector, kbias * kilojoule / mole / nanometer**2, biasval * nanometer, axis="x"
         )
 
-        biasinitxml = bdir / f"biasinit_{tag}.xml"
-        sim.write_state(str(biasinitxml))
+        with open(str(bdir / "bias.dat"), "w") as f:
+            f.write(
+                "Step\tx_dist_bias[kJ/mol]\ty_bias_bias[kJ/mol]\tz_bias_bias[kJ/mol]\t"
+                "angle_bias[kJ/mol]\ttorsion_bias[kJ/mol]\trot_angle_bias[kJ/mol]\n"
+            )
+            n = len(biasx)
+            for i in range(n):
+                bx = biasx[i].value_in_unit(kilojoule / mole)
+                by = biasy[i].value_in_unit(kilojoule / mole)
+                bz = biasz[i].value_in_unit(kilojoule / mole)
+                ba = biasnorm[i].value_in_unit(kilojoule / mole)
+                bt = biastwist[i].value_in_unit(kilojoule / mole)
+                bra = (biasangle1[i] + biasangle2[i]).value_in_unit(kilojoule / mole)
 
-        sim.update_umbrella_xyz_distance("x", kbias)
-        sim.update_umbrella_xyz_distance("y", kdist)
-        sim.update_umbrella_xyz_distance("z", kdist)
-        sim.update_umbrella_center(kcent)
-        sim.update_umbrella_angle_norm(kangle)
-        sim.update_umbrella_dihedral(kangle)
-        sim.update_umbrella_angle(kangle)
+                f.write(f"{i}\t" f"{bx}\t" f"{by}\t" f"{bz}\t" f"{ba}\t" f"{bt}\t" f"{bra}\n")
 
-        sim.simulate(
-            nstep=params.prodsteps,
-            nout=params.prodout,
-            logfile=str(bdir / "biasprod_0.log"),
-        )
+        with open(str(bdir / "geometry.dat"), "w") as f:
+            f.write(
+                "Step\tX_Distance[nm]\tY_Distance[nm]\tZ_Distance[nm]\t"
+                "NormalAngle[deg]\tTorsionAngle[deg]\tRotAngle1[deg]\tRotAngle2[deg]\n"
+            )
+            n = len(distance_vector)
+            for i in range(n):
+                gx = distance_vector[i][0].value_in_unit(nanometer)
+                gy = distance_vector[i][1].value_in_unit(nanometer)
+                gz = distance_vector[i][2].value_in_unit(nanometer)
+                gn = angle_norm[i].value_in_unit(degrees)
+                gd = dihedral[i].value_in_unit(degrees)
+                ga1 = angle1[i].value_in_unit(degrees)
+                ga2 = angle2[i].value_in_unit(degrees)
 
-        sim.write_state(str(bdir / "biasprod_0.xml"))
+                f.write(
+                    f"{i}\t" f"{gx}\t" f"{gy}\t" f"{gz}\t" f"{gn}\t" f"{gd}\t" f"{ga1}\t" f"{ga2}\n"
+                )
 
-        restart = biasinitxml
         print(f"finished {tag}")
 
 

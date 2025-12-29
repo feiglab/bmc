@@ -24,6 +24,7 @@ dependencies = [
 
 [project.scripts]
 tileumbrella = "bmc.cli.tileumbrella:main"
+tileumbrella_analysis = "bmc.cli.tileumbrella_analysis:main"
 prep_tileumbrella = "bmc.cli.prep_tileumbrella:main"
 equi_tileumbrella = "bmc.cli.equi_tileumbrella:main"
 initbias_tileumbrella = "bmc.cli.initbias_tileumbrella:main"
@@ -35,7 +36,6 @@ script-files = [
   "scripts/check_jobs.sh",
   "scripts/combine_tileumbrella.sh",
   "scripts/run_tileumbrella.sh",
-  "scripts/run_tileumbrella_analysis.sh",
   "scripts/setup_jobs.sh",
   "scripts/submit_jobs.sh",
   "scripts/job.tileumbrella.slurm.template",
