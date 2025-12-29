@@ -60,7 +60,7 @@ touch "$lock"
 #script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 
 # call to program to do the work
-tileumbrella.py --mode "$mode" --bias "$bias" --run "$next" --nstep "$nstep" --tstep "$tstep" --gamma "$gamma" >"$tdir/run.out" 2>"$tdir/error.out"
+tileumbrella --mode "$mode" --bias "$bias" --run "$next" --nstep "$nstep" --tstep "$tstep" --gamma "$gamma" >"$tdir/run.out" 2>"$tdir/error.out"
 
 py_rc=$?
 
