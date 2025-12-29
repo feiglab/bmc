@@ -44,3 +44,15 @@ script-files = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.black]
+line-length = 100
+target-version = ["py39"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E","F","I","UP"]
+ignore = ["UP007", "UP045", "E501"]

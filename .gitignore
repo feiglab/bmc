@@ -6,4 +6,5 @@ __pycache__
 *.egg-info/
 src/*.egg-info/
 **/*.egg-info/
-
+hexamer-hexamer-umbrella-simulations.zip
+data

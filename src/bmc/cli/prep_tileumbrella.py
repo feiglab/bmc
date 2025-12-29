@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 #
 # hexamer-hexamer:
-#    A:B:C:D:E:F.2-91 G:H:I:J:K:L.2-91 
+#    A:B:C:D:E:F.2-91 G:H:I:J:K:L.2-91
 # hexmer-pentamer:
 #    F:G:H:I:J:K.2-91 A:B:C:D:E.1-95
 # hexamer-trimer:
@@ -11,14 +11,12 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
 
 import numpy as np
-from openmm.unit import nanometer
-
-from cocomo import Assembly, COCOMO
+from cocomo import COCOMO, Assembly
 from mdsim import (
     MDSim,
     PDBReader,
@@ -27,6 +25,7 @@ from mdsim import (
     plane_normal,
     solvate,
 )
+from openmm.unit import nanometer
 
 
 def _as_float(name: str, s: str) -> float:
@@ -79,9 +78,7 @@ def _parse_box_nm(s: str) -> BoxNM:
         y = _as_float("boxy", parts[1])
         z = _as_float("boxz", parts[2])
         return BoxNM(x, y, z)
-    raise SystemExit(
-        "ERROR: --box must be 'x', 'x:y', or 'x:y:z' in nm (e.g. 22:11:9)"
-    )
+    raise SystemExit("ERROR: --box must be 'x', 'x:y', or 'x:y:z' in nm (e.g. 22:11:9)")
 
 
 def _expand_forcefields(paths: Sequence[str]) -> list[str]:
@@ -90,9 +87,7 @@ def _expand_forcefields(paths: Sequence[str]) -> list[str]:
 
 def _default_forcefields() -> list[str]:
     ffdir = Path.home() / "ff" / "openmm"
-    return _expand_forcefields(
-        [str(ffdir / "c36m.xml"), str(ffdir / "waters_ions_default.xml")]
-    )
+    return _expand_forcefields([str(ffdir / "c36m.xml"), str(ffdir / "waters_ions_default.xml")])
 
 
 def _validate_forcefields(ff: Sequence[str]) -> None:
@@ -303,4 +298,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

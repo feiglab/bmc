@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 from cocomo import COCOMO
 from mdsim import MDSim
@@ -161,4 +161,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

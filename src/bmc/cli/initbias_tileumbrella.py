@@ -11,12 +11,11 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
 
 import numpy as np
-
 from cocomo import COCOMO
 from mdsim import MDSim, PDBReader, StructureSelector
 
@@ -58,9 +57,7 @@ def _find(tdir: Path, filename: str) -> Path:
     if candidate.is_file():
         return candidate.resolve()
 
-    raise FileNotFoundError(
-        f"Could not find '{filename}' in {tdir} or its parents or CWD"
-    )
+    raise FileNotFoundError(f"Could not find '{filename}' in {tdir} or its parents or CWD")
 
 
 def _split_tile_sel(sel: str) -> list[str]:
@@ -322,9 +319,7 @@ def main() -> None:
         sim.update_umbrella_angle(kangle)
 
         sim.simulate(
-            nstep=params.prodsteps, 
-            nout=params.prodout, 
-            logfile=str(bdir / "biasprod_0.log")
+            nstep=params.prodsteps, nout=params.prodout, logfile=str(bdir / "biasprod_0.log")
         )
 
         sim.write_state(str(bdir / "biasprod_0.xml"))
@@ -335,4 +330,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

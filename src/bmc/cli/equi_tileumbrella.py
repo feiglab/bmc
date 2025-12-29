@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 from cocomo import COCOMO
 from mdsim import MDSim, PDBReader
@@ -85,9 +85,7 @@ def main() -> None:
     device = int(args.device)
 
     if args.pdb is None:
-        refpdb = Path("dimer.solvated.pdb") if mode == "allatom" else Path(
-            "dimer.protein.pdb"
-        )
+        refpdb = Path("dimer.solvated.pdb") if mode == "allatom" else Path("dimer.protein.pdb")
     else:
         refpdb = Path(args.pdb)
 
@@ -118,9 +116,7 @@ def main() -> None:
         )
 
         sim.set_position_restraint(selection="protein and (name CA or name CB)")
-        sim.setup_simulation(
-            resources=resources, device=device, temperature=5, tstep=0.001
-        )
+        sim.setup_simulation(resources=resources, device=device, temperature=5, tstep=0.001)
 
         minsteps = 1000
         sim.minimize(nstep=minsteps)
@@ -178,4 +174,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
