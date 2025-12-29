@@ -116,6 +116,7 @@ class ModeParams:
     initsteps: int
     initout: int
     prodsteps: int
+    prodout: int
     tstep: float
     gamma: float
 
@@ -127,6 +128,7 @@ def _mode_params(mode: str) -> ModeParams:
             initsteps=10000,
             initout=1000,
             prodsteps=5000,
+            prodout=1000,
             tstep=0.003,
             gamma=0.1,
         )
@@ -134,7 +136,8 @@ def _mode_params(mode: str) -> ModeParams:
         return ModeParams(
             initsteps=1000,
             initout=200,
-            prodsteps=100,
+            prodsteps=200,
+            prodout=100,
             tstep=0.03,
             gamma=1.0,
         )
@@ -318,7 +321,11 @@ def main() -> None:
         sim.update_umbrella_dihedral(kangle)
         sim.update_umbrella_angle(kangle)
 
-        sim.simulate(nstep=params.prodsteps, logfile=str(bdir / "biasprod_0.log"))
+        sim.simulate(
+            nstep=params.prodsteps, 
+            nout=params.prodout, 
+            logfile=str(bdir / "biasprod_0.log")
+        )
 
         sim.write_state(str(bdir / "biasprod_0.xml"))
 
