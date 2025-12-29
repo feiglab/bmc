@@ -7,7 +7,7 @@ from pathlib import Path
 
 from cocomo import COCOMO
 from mdsim import MDSim, PDBReader
-from tile_config import format_value, read_config, write_config
+from .tile_config import format_value, read_config, write_config
 
 
 def _parse_config_args(argv: Sequence[str] | None = None) -> Path:

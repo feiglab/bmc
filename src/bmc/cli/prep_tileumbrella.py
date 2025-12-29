@@ -26,7 +26,7 @@ from mdsim import (
     solvate,
 )
 from openmm.unit import nanometer
-from tile_config import format_value, parse_bool, read_config, split_values, write_config
+from .tile_config import format_value, parse_bool, read_config, split_values, write_config
 
 
 def _as_float(name: str, s: str) -> float:

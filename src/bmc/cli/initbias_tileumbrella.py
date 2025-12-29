@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 from cocomo import COCOMO
 from mdsim import MDSim, PDBReader, StructureSelector
-from tile_config import format_value, read_config, write_config
+from .tile_config import format_value, read_config, write_config
 
 
 def _as_int(name: str, s: str) -> int:
