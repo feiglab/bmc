@@ -13,6 +13,7 @@ import logging
 import re
 import sys
 import warnings
+from collections.abc import Iterable
 from pathlib import Path
 
 import gemmi
@@ -1061,6 +1062,12 @@ def read_umbrella_geometry(fname, *, verbose=False):
     return df
 
 
+def _warn_if_nan_ww(ww: pd.DataFrame | pd.Series, label: str) -> None:
+    arr = np.asarray(ww, dtype=float)
+    if np.isnan(arr).any():
+        warnings.warn(f"{label}: ww contains NaN", RuntimeWarning, stacklevel=2)
+
+
 def process_umbrella(
     tag="hh",
     *,
@@ -1122,6 +1129,7 @@ def process_umbrella(
     for p in path:
         wham = unbias_wham(np.array([data[p][biasval]]).T)
         data[p]["ww"] = pd.DataFrame(np.exp(wham["logW"]) / np.sum(np.exp(wham["logW"])))
+        # _warn_if_nan_ww(data[p]["ww"], f"process_umbrella[{p}]")
 
     combmask = pd.concat([mask[p] for p in path], ignore_index=True)
     data["comb"] = df.loc[combmask].copy()
@@ -1140,6 +1148,8 @@ def process_umbrella(
     # data['wham']=wham
 
     data["comb"]["ww"] = pd.DataFrame(mbar["ww"])
+    # _warn_if_nan_ww(data["comb"]["ww"], "process_umbrella[comb]")
+
     data["mbar"] = mbar
     data["bias_matrix"] = bias_matrix
 
@@ -1909,6 +1919,129 @@ def plot_series(
         ax.set_yscale("log")
     ax.grid(True, linestyle="--", alpha=0.5)
     fig.tight_layout()
+    if save:
+        fig.savefig(save, dpi=300)
+    plt.show()
+
+
+def plot_hist_overlap(
+    frames: dict[str, pd.DataFrame],
+    col: str,
+    *,
+    wcol: str | None = None,
+    keys: Iterable[str] | None = None,
+    bins: int = 60,
+    rang: tuple[float, float] | None = None,
+    density: bool = True,
+    cmap: str = "viridis",
+    alpha: float = 0.35,
+    lw: float = 1.3,
+    figsize: tuple[float, float] = (14.0, 4.2),
+    title: str | None = None,
+    xlabel: str | None = None,
+    ylabel: str | None = None,
+    legend: bool = True,
+    legend_max: int = 18,
+    sort_keys: bool = True,
+    save: str | None = None,
+) -> None:
+    """
+    Overlay per-dict-entry histograms for a given dataframe column.
+
+    Parameters
+    ----------
+    frames : dict[str, DataFrame]
+        Mapping like {"run_6.20": df, ...}. Non-DataFrame entries are ignored.
+    col : str
+        Column to histogram (e.g., "gxdist").
+    wcol : str | None
+        Optional per-sample weights column (e.g., "ww").
+    keys : iterable[str] | None
+        Subset/order of keys to plot. Defaults to all DataFrame keys.
+    bins : int
+        Number of bins.
+    rang : (float, float) | None
+        Histogram x-range. If None, computed from all data.
+    density : bool
+        Plot probability density (recommended for overlap checks).
+    cmap : str
+        Matplotlib colormap name.
+    alpha : float
+        Line fill alpha.
+    lw : float
+        Line width.
+    figsize : (float, float)
+        Wide figure size.
+    legend : bool
+        Show legend (auto-limited via legend_max).
+    legend_max : int
+        Max legend entries (avoids huge legends for 50 windows).
+    sort_keys : bool
+        Sort keys (lexicographic) if keys is None.
+    save : str | None
+        Save figure path if given.
+    """
+    df_keys = [k for k, v in frames.items() if isinstance(v, pd.DataFrame)]
+    if keys is None:
+        use_keys = sorted(df_keys) if sort_keys else list(df_keys)
+    else:
+        use_keys = [k for k in keys if k in frames and isinstance(frames[k], pd.DataFrame)]
+
+    if not use_keys:
+        raise ValueError("No DataFrame entries to plot.")
+
+    xs: list[np.ndarray] = []
+    ws: list[np.ndarray | None] = []
+    for k in use_keys:
+        s = pd.to_numeric(frames[k][col], errors="coerce").to_numpy()
+        mask = np.isfinite(s)
+        s = s[mask]
+        if s.size == 0:
+            continue
+        xs.append(s)
+        if wcol is None:
+            ws.append(None)
+        else:
+            w = pd.to_numeric(frames[k][wcol], errors="coerce").to_numpy()
+            w = w[mask]
+            w = w[np.isfinite(w)]
+            if w.size != s.size:
+                w = None
+            ws.append(w)
+
+    if not xs:
+        raise ValueError(f"No finite data found for column {col!r}.")
+
+    if rang is None:
+        xmin = min(float(np.min(a)) for a in xs)
+        xmax = max(float(np.max(a)) for a in xs)
+        pad = 1e-12 * (xmax - xmin + 1.0)
+        rang = (xmin, xmax + pad)
+
+    edges = np.linspace(rang[0], rang[1], bins + 1)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+
+    fig, ax = plt.subplots(figsize=figsize, dpi=100, constrained_layout=True)
+    cm = plt.get_cmap(cmap)
+    n = len(xs)
+    colors = [cm(i / max(n - 1, 1)) for i in range(n)]
+
+    shown = 0
+    for i, (k, x, w) in enumerate(zip(use_keys, xs, ws)):
+        h, _ = np.histogram(x, bins=edges, weights=w, density=density)
+        ax.plot(centers, h, color=colors[i], lw=lw, alpha=0.95, label=k)
+        ax.fill_between(centers, 0.0, h, color=colors[i], alpha=alpha, linewidth=0.0)
+        shown += 1
+
+    # ax.set_title(title or f"Histogram overlap: {col}")
+    ax.set_xlabel(xlabel or col)
+    ax.set_ylabel(ylabel or ("Density" if density else "Count"))
+    ax.set_xlim(rang[0], rang[1])
+    ax.grid(True, linestyle="--", alpha=0.35)
+
+    if legend and shown <= legend_max:
+        ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0), borderaxespad=0.0)
+
     if save:
         fig.savefig(save, dpi=300)
     plt.show()
