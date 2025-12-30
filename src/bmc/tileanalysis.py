@@ -1062,12 +1062,6 @@ def read_umbrella_geometry(fname, *, verbose=False):
     return df
 
 
-def _warn_if_nan_ww(ww: pd.DataFrame | pd.Series, label: str) -> None:
-    arr = np.asarray(ww, dtype=float)
-    if np.isnan(arr).any():
-        warnings.warn(f"{label}: ww contains NaN", RuntimeWarning, stacklevel=2)
-
-
 def process_umbrella(
     tag="hh",
     *,
@@ -1129,7 +1123,6 @@ def process_umbrella(
     for p in path:
         wham = unbias_wham(np.array([data[p][biasval]]).T)
         data[p]["ww"] = pd.DataFrame(np.exp(wham["logW"]) / np.sum(np.exp(wham["logW"])))
-        # _warn_if_nan_ww(data[p]["ww"], f"process_umbrella[{p}]")
 
     combmask = pd.concat([mask[p] for p in path], ignore_index=True)
     data["comb"] = df.loc[combmask].copy()
@@ -1148,7 +1141,6 @@ def process_umbrella(
     # data['wham']=wham
 
     data["comb"]["ww"] = pd.DataFrame(mbar["ww"])
-    # _warn_if_nan_ww(data["comb"]["ww"], "process_umbrella[comb]")
 
     data["mbar"] = mbar
     data["bias_matrix"] = bias_matrix
