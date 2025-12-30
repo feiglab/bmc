@@ -10,10 +10,20 @@ if [[ -n "$workdir_arg" && -d "$workdir_arg" ]]; then
     cd -- "$workdir_arg"
 fi
 
+# --- read defaults from config (if present) ---
 default_mode=allatom
+cfg_nsteps=""
+cfg_maxrun=""
+
 if [[ -r config ]]; then
     cfg_mode=$(
-        awk '$1=="mode" && NF>=2 { print $2; exit }' config
+        awk '$1=="mode"   && NF>=2 { print $2; exit }' config
+    )
+    cfg_nsteps=$(
+        awk '$1=="nsteps" && NF>=2 { print $2; exit }' config
+    )
+    cfg_maxrun=$(
+        awk '$1=="maxrun" && NF>=2 { print $2; exit }' config
     )
     if [[ -n "${cfg_mode:-}" ]]; then
         default_mode=$cfg_mode
@@ -22,25 +32,29 @@ fi
 
 mode=${mode_arg:-$default_mode}
 
+# --- mode-dependent defaults, overridden by config values if present ---
 if [[ "${mode,,}" == "cocomo" ]]; then
-   nsteps=${nsteps_arg:-10000000}
-   maxrun=${maxrun_arg:-1}
+   default_nsteps=10000000
+   default_maxrun=1
    tag=CO
 else
-   nsteps=${nsteps_arg:-1250000}
-   maxrun=${maxrun_arg:-10}
+   default_nsteps=1250000
+   default_maxrun=10
    tag=AA
 fi
+
+[[ -n "${cfg_nsteps:-}" ]] && default_nsteps=$cfg_nsteps
+[[ -n "${cfg_maxrun:-}" ]] && default_maxrun=$cfg_maxrun
+
+nsteps=${nsteps_arg:-$default_nsteps}
+maxrun=${maxrun_arg:-$default_maxrun}
 
 [[ -r tag ]] && tag=$(<tag)
 
 dir=$(pwd)
-
 dir_esc=$(printf '%s' "$dir" | sed 's/[\/&|\\]/\\&/g')
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-#sdir_esc=$(printf '%s' "$script_dir" | sed 's/[\/&|\\]/\\&/g')
-
 template=${script_dir}/job.tileumbrella.slurm.template
 
 if [[ ! -r $template ]]; then
@@ -48,8 +62,7 @@ if [[ ! -r $template ]]; then
    exit 1
 fi
 
-
-echo $maxrun > maxrun
+echo "$maxrun" > maxrun
 for n in run_?.??; do
   biasval=${n#run_}
   echo 0 > "$n/last"
@@ -61,6 +74,6 @@ for n in run_?.??; do
     -e "s|DIR|$dir_esc|g" \
     -e "s/TAG/$tag/g" \
     -e "s/NSTEPS/$nsteps/g" \
-    $template > "$n/job.prodbias.slurm"
+    "$template" > "$n/job.prodbias.slurm"
 done
 
