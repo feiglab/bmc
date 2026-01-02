@@ -129,8 +129,12 @@ def _apply_config_defaults(
         defaults["othersel"] = cfg["othersel"]
     if "box" in cfg:
         defaults["box"] = cfg["box"]
+    if "biasdir" in cfg:
+        defaults["biasdir"] = cfg["biasdir"]
     if "conc" in cfg:
         defaults["conc"] = float(cfg["conc"])
+    if "surf" in cfg:
+        defaults["surf"] = float(cfg["surf"])
     if "orient" in cfg:
         defaults["orient"] = parse_bool(cfg["orient"])
     if "ff" in cfg:
@@ -201,10 +205,23 @@ def _parse_args(
         help="Box size in nm: x, x:y, or x:y:z (e.g. 22:11:9).",
     )
     p.add_argument(
+        "--biasdir",
+        type=str,
+        default="x",
+        help="Bias direction 'x', 'y', 'z'",
+    )
+
+    p.add_argument(
         "--conc",
         type=float,
         default=100.0,
         help="NaCl concentration in mM (allatom only)",
+    )
+    p.add_argument(
+        "--surf",
+        type=float,
+        default=0.7,
+        help="surface scaling parameter (COCOMO only)",
     )
 
     orient_grp = p.add_mutually_exclusive_group()
@@ -270,8 +287,19 @@ def main() -> None:
     else:
         pdb_arg = str(args.pdb)
 
+    biasdir = str(args.biasdir)
     if args.box is None:
-        box_str = "22:11:9" if mode == "allatom" else "100"
+        if mode == "allatom":
+            if biasdir == "x":
+                box_str = "22:11:9"
+            elif biasdir == "y":
+                box_str = "11:22:9"
+            elif biasdir == "z":
+                box_str = "10:10:18"
+            else:
+                raise SystemExit(f"invalid biasdir {biasdir!r}; must be 'x', 'y', or 'z'")
+        else:
+            box_str = "100"
     else:
         box_str = str(args.box)
 
@@ -291,7 +319,9 @@ def main() -> None:
         cfg["refsel"] = format_value(args.refsel)
         cfg["othersel"] = format_value(args.othersel)
         cfg["box"] = format_value(box_str)
+        cfg["biasdir"] = format_value(biasdir)
         cfg["conc"] = format_value(args.conc)
+        cfg["surf"] = format_value(args.surf)
         cfg["orient"] = format_value(bool(args.orient))
         if ff_val is not None:
             cfg["ff"] = format_value(ff_val)
@@ -307,6 +337,10 @@ def main() -> None:
     ch = s.center(StructureSelector(refsel).atom_indices(s))[0]
 
     if bool(args.orient):
+        biasdir = str(args.biasdir).lower()
+        if biasdir not in {"x", "y", "z"}:
+            raise SystemExit(f"invalid biasdir {biasdir!r}; must be 'x', 'y', or 'z'")
+
         pts = [s.center(StructureSelector(h).atom_indices(s))[0] for h in reftile]
         n = plane_normal(pts)
         phiy = float(np.arctan2(-n[0], n[2]))
@@ -317,17 +351,33 @@ def main() -> None:
         phix = float(np.arctan2(n[1], np.hypot(n[0], n[2])))
         s.rotate_about_x(phix, anchor=ch)
 
-        co = s.center(StructureSelector(othersel).atom_indices(s))[0]
-        v = (co - ch).value_in_unit(nanometer)
-        phiz = float(np.arctan2(v[1], v[0]))
-        s.rotate_about_z(-phiz, anchor=ch)
+        phiz = 0.0
+        if biasdir in {"x", "y"}:
+            co = s.center(StructureSelector(othersel).atom_indices(s))[0]
+            v = (co - ch).value_in_unit(nanometer)
+            if biasdir == "x":
+                phiz = float(np.arctan2(v[1], v[0]))
+                s.rotate_about_z(-phiz, anchor=ch)
+            else:
+                phiz = float(np.arctan2(v[0], v[1]))
+                s.rotate_about_z(+phiz, anchor=ch)
 
         rx = np.degrees(phix)
         ry = np.degrees(phiy)
         rz = np.degrees(phiz)
         print(f"rotated Y: {ry:.3f} X: {rx:.3f} Z: {rz:.3f} degrees")
 
-    translate = [boxx / 4.0 - ch[0], boxy / 2.0 - ch[1], boxz / 2.0 - ch[2]]
+    biasdir = str(args.biasdir).lower()
+    if biasdir == "x":
+        target = (boxx / 4.0, boxy / 2.0, boxz / 2.0)
+    elif biasdir == "y":
+        target = (boxx / 2.0, boxy / 4.0, boxz / 2.0)
+    elif biasdir == "z":
+        target = (boxx / 2.0, boxy / 2.0, boxz / 4.0)
+    else:
+        raise SystemExit(f"invalid biasdir {biasdir!r}")
+
+    translate = [target[0] - ch[0], target[1] - ch[1], target[2] - ch[2]]
     s.translate(translate)
 
     t_nm = [float(x.value_in_unit(nanometer)) for x in translate]
@@ -356,6 +406,7 @@ def main() -> None:
             switching="openmm",
         )
     elif mode == "cocomo":
+        surf = float(args.surf)
         components = _find(tdir, "dimer.components")
         component_types = _find(tdir, "component_types_files")
         interactions = _find(tdir, "interactions")
@@ -365,7 +416,7 @@ def main() -> None:
             structure=s,
             interactions=interactions,
         )
-        sim = COCOMO(asm, box=(boxx, boxy, boxz), version=2)
+        sim = COCOMO(asm, box=(boxx, boxy, boxz), version=2, surfscale=surf)
     else:
         raise SystemExit(f"invalid mode {mode!r}")
 

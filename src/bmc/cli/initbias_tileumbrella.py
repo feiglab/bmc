@@ -19,7 +19,7 @@ import numpy as np
 from cocomo import COCOMO
 from mdsim import MDSim, PDBReader, StructureSelector
 
-from .tile_config import format_value, read_config, write_config
+from .tile_config import format_value, parse_bool, read_config, write_config
 
 
 def _parse_floats(s: str, defaults: Sequence[float], n_out: int) -> list[float]:
@@ -172,8 +172,12 @@ def _apply_config_defaults(
         defaults["rot"] = cfg["rot"]
     if "bias" in cfg:
         defaults["bias"] = cfg["bias"]
+    if "flip" in cfg:
+        defaults["flip"] = parse_bool(cfg["flip"])
     if "k" in cfg:
         defaults["k"] = cfg["k"]
+    if "biasdir" in cfg:
+        defaults["biasdir"] = cfg["biasdir"]
 
     if defaults:
         p.set_defaults(**defaults)
@@ -250,11 +254,33 @@ def _parse_args(
         help="Bias range as 'bmin:bmax:bdelta'",
     )
     p.add_argument(
+        "--biasdir",
+        type=str,
+        default="x",
+        help="Bias direction 'x', 'y', 'z'",
+    )
+    p.add_argument(
         "--k",
         type=str,
         default="500:200",
         help="Force constants as 'kinit:kbias[:kdist[:kcent[:kangle]]]'",
     )
+
+    flip_grp = p.add_mutually_exclusive_group()
+    flip_grp.add_argument(
+        "--flip",
+        dest="flip",
+        action="store_true",
+        help="Flipped second ring",
+    )
+    flip_grp.add_argument(
+        "--no-flip",
+        dest="flip",
+        action="store_false",
+        help="No flipped second ring",
+    )
+    p.set_defaults(flip=False)
+
     p.add_argument("--device", type=int, default=0, help="Device index")
     p.add_argument("--resources", type=str, default="CUDA", help="OpenMM platform name")
 
@@ -297,7 +323,9 @@ def main() -> None:
         cfg["anchor"] = format_value(args.anchor)
         cfg["rot"] = format_value(args.rot)
         cfg["bias"] = format_value(args.bias)
+        cfg["biasdir"] = format_value(args.biasdir)
         cfg["k"] = format_value(args.k)
+        cfg["flip"] = format_value(bool(args.flip))
         write_config(cfg_path, cfg)
 
     pdb_path = _find(sdir, str(args.refpdb))
@@ -306,6 +334,7 @@ def main() -> None:
     refsel = str(args.refsel)
     othersel = str(args.othersel)
     anchor = str(args.anchor)
+    biasdir = str(args.biasdir)
 
     refrot1, refrot2 = _parse_floats(str(args.rot), [90.0, 90.0], n_out=2)
     bmin, bmax, bdel = _parse_floats(str(args.bias), [6.0, 9.0, 0.1], n_out=3)
@@ -354,11 +383,27 @@ def main() -> None:
         else:
             raise SystemExit(f"ERROR: unknown mode {mode!r}")
 
-        sim.set_umbrella_xyz_distance(aca, bca, direction="x", target=biasval, k=kinit)
-        sim.set_umbrella_xyz_distance(aca, bca, direction="y", target=0.0, k=kinit)
-        sim.set_umbrella_xyz_distance(aca, bca, direction="z", target=0.0, k=kinit)
+        if biasdir == "x":
+            sim.set_umbrella_xyz_distance(aca, bca, direction="x", target=biasval, k=kinit)
+            sim.set_umbrella_xyz_distance(aca, bca, direction="y", target=0.0, k=kinit)
+            sim.set_umbrella_xyz_distance(aca, bca, direction="z", target=0.0, k=kinit)
+        elif biasdir == "y":
+            sim.set_umbrella_xyz_distance(aca, bca, direction="x", target=0.0, k=kinit)
+            sim.set_umbrella_xyz_distance(aca, bca, direction="y", target=biasval, k=kinit)
+            sim.set_umbrella_xyz_distance(aca, bca, direction="z", target=0.0, k=kinit)
+        elif biasdir == "z":
+            sim.set_umbrella_xyz_distance(aca, bca, direction="x", target=0.0, k=kinit)
+            sim.set_umbrella_xyz_distance(aca, bca, direction="y", target=0.0, k=kinit)
+            sim.set_umbrella_xyz_distance(aca, bca, direction="z", target=biasval, k=kinit)
+        else:
+            raise SystemExit(f"ERROR: invalid biasdir {biasdir}")
+
         sim.set_umbrella_center(rc, k=kinit)
-        sim.set_umbrella_angle_norm(aca, aca1, aca2, bca, bca1, bca2, k=kinit)
+
+        if bool(args.flip):
+            sim.set_umbrella_angle_norm(aca, aca1, aca2, bca, bca2, bca1, k=kinit)
+        else:
+            sim.set_umbrella_angle_norm(aca, aca1, aca2, bca, bca1, bca2, k=kinit)
         sim.set_umbrella_dihedral(acat1, aca, bca, bcat1, k=kinit)
         sim.set_umbrella_angle(aca, bca, bcat1, target=np.radians(refrot1), k=kinit)
         sim.set_umbrella_angle(acat1, aca, bca, target=np.radians(refrot2), k=kinit)
@@ -383,9 +428,21 @@ def main() -> None:
         biasinitxml = bdir / f"biasinit_{tag}.xml"
         sim.write_state(str(biasinitxml))
 
-        sim.update_umbrella_xyz_distance("x", kbias)
-        sim.update_umbrella_xyz_distance("y", kdist)
-        sim.update_umbrella_xyz_distance("z", kdist)
+        if biasdir == "x":
+            sim.update_umbrella_xyz_distance("x", kbias)
+            sim.update_umbrella_xyz_distance("y", kdist)
+            sim.update_umbrella_xyz_distance("z", kdist)
+        elif biasdir == "y":
+            sim.update_umbrella_xyz_distance("x", kdist)
+            sim.update_umbrella_xyz_distance("y", kbias)
+            sim.update_umbrella_xyz_distance("z", kdist)
+        elif biasdir == "z":
+            sim.update_umbrella_xyz_distance("x", kdist)
+            sim.update_umbrella_xyz_distance("y", kdist)
+            sim.update_umbrella_xyz_distance("z", kbias)
+        else:
+            raise SystemExit(f"ERROR: invalid biasdir {biasdir}")
+
         sim.update_umbrella_center(kcent)
         sim.update_umbrella_angle_norm(kangle)
         sim.update_umbrella_dihedral(kangle)

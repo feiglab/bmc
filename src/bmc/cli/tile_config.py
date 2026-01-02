@@ -79,7 +79,9 @@ _ORDER = [
     "othersel",
     "anchor",
     "rot",
+    "flip",
     "bias",
+    "biasdir",
     "k",
     "setup",
     "equi",
@@ -89,6 +91,7 @@ _ORDER = [
     "cadcd",
     "box",
     "conc",
+    "surf",
     "orient",
     "ff",
 ]

@@ -17,7 +17,7 @@ from mdsim import (
 )
 from openmm.unit import degrees, kilojoule, mole, nanometer, radian
 
-from .tile_config import format_value, read_config, write_config
+from .tile_config import format_value, parse_bool, read_config, write_config
 
 
 def _parse_floats(s: str, defaults: Sequence[float], n_out: int) -> list[float]:
@@ -135,6 +135,10 @@ def _apply_config_defaults(
         defaults["k"] = cfg["k"]
     if "bias" in cfg:
         defaults["bias"] = cfg["bias"]
+    if "biasdir" in cfg:
+        defaults["biasdir"] = cfg["biasdir"]
+    if "flip" in cfg:
+        defaults["flip"] = parse_bool(cfg["flip"])
 
     if defaults:
         p.set_defaults(**defaults)
@@ -194,11 +198,32 @@ def _parse_args(
         help="Bias range as 'bmin:bmax:bdelta'",
     )
     p.add_argument(
+        "--biasdir",
+        type=str,
+        default="x",
+        help="Bias direction 'x', 'y', 'z'",
+    )
+    p.add_argument(
         "--k",
         type=str,
         default="500:200",
         help="Force constants as 'kinit:kbias[:kdist[:kcent[:kangle]]]'",
     )
+
+    flip_grp = p.add_mutually_exclusive_group()
+    flip_grp.add_argument(
+        "--flip",
+        dest="flip",
+        action="store_true",
+        help="Flipped second ring",
+    )
+    flip_grp.add_argument(
+        "--no-flip",
+        dest="flip",
+        action="store_false",
+        help="No flipped second ring",
+    )
+    p.set_defaults(flip=False)
 
     p.add_argument(
         "--config",
@@ -233,7 +258,9 @@ def main() -> None:
         cfg["anchor"] = format_value(args.anchor)
         cfg["rot"] = format_value(args.rot)
         cfg["bias"] = format_value(args.bias)
+        cfg["biasdir"] = format_value(args.biasdir)
         cfg["k"] = format_value(args.k)
+        cfg["flip"] = format_value(bool(args.flip))
         write_config(cfg_path, cfg)
 
     pdb_path = _find(".", str(args.capdb))
@@ -245,6 +272,8 @@ def main() -> None:
     refsel = str(args.refsel)
     othersel = str(args.othersel)
     anchor = str(args.anchor)
+
+    biasdir = str(args.biasdir)
 
     refrot1, refrot2 = _parse_floats(str(args.rot), [90.0, 90.0], n_out=2)
     bmin, bmax, bdel = _parse_floats(str(args.bias), [6.0, 9.0, 0.1], n_out=3)
@@ -272,15 +301,23 @@ def main() -> None:
     bcat1 = StructureSelector(bselt + ".CA").atom_indices(s)
 
     distance_vector = traj.distance_vector(aca, bca)
-    angle_norm = traj.angle_norm(aca, aca1, aca2, bca, bca1, bca2)
+
+    if bool(args.flip):
+        angle_norm = traj.angle_norm(aca, aca1, aca2, bca, bca2, bca1)
+    else:
+        angle_norm = traj.angle_norm(aca, aca1, aca2, bca, bca1, bca2)
+
     dihedral = traj.dihedral(acat1, aca, bca, bcat1)
     angle1 = traj.angle(aca, bca, bcat1)
     angle2 = traj.angle(acat1, aca, bca)
 
-    biasy = harmonic_energy_xyz(
+    biasx0 = harmonic_energy_xyz(
+        distance_vector, kdist * kilojoule / mole / nanometer**2, 0.0 * nanometer, axis="x"
+    )
+    biasy0 = harmonic_energy_xyz(
         distance_vector, kdist * kilojoule / mole / nanometer**2, 0.0 * nanometer, axis="y"
     )
-    biasz = harmonic_energy_xyz(
+    biasz0 = harmonic_energy_xyz(
         distance_vector, kdist * kilojoule / mole / nanometer**2, 0.0 * nanometer, axis="z"
     )
     biasnorm = harmonic_energy_angle(
@@ -301,9 +338,35 @@ def main() -> None:
 
         bdir = Path(f"run_{tag}")
 
-        biasx = harmonic_energy_xyz(
-            distance_vector, kbias * kilojoule / mole / nanometer**2, biasval * nanometer, axis="x"
-        )
+        if biasdir == "x":
+            biasx = harmonic_energy_xyz(
+                distance_vector,
+                kbias * kilojoule / mole / nanometer**2,
+                biasval * nanometer,
+                axis="x",
+            )
+            biasy = biasy0
+            biasz = biasz0
+        elif biasdir == "y":
+            biasx = biasx0
+            biasy = harmonic_energy_xyz(
+                distance_vector,
+                kbias * kilojoule / mole / nanometer**2,
+                biasval * nanometer,
+                axis="y",
+            )
+            biasz = biasz0
+        elif biasdir == "z":
+            biasx = biasx0
+            biasy = biasy0
+            biasz = harmonic_energy_xyz(
+                distance_vector,
+                kbias * kilojoule / mole / nanometer**2,
+                biasval * nanometer,
+                axis="z",
+            )
+        else:
+            raise SystemExit(f"ERROR: invalid biasdir {biasdir}")
 
         with open(str(bdir / "bias.dat"), "w") as f:
             f.write(
