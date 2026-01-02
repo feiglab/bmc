@@ -358,6 +358,7 @@ def main() -> None:
     bca = StructureSelector(othersel + ".CA").atom_indices(s)
 
     rc = [StructureSelector(t + ".CA").atom_indices(s) for t in reftile]
+    rcref = [s.center(r)[0] for r in rc]
 
     aca1 = StructureSelector(asel1 + ".CA").atom_indices(s)
     aca2 = StructureSelector(asel2 + ".CA").atom_indices(s)
@@ -398,7 +399,7 @@ def main() -> None:
         else:
             raise SystemExit(f"ERROR: invalid biasdir {biasdir}")
 
-        sim.set_umbrella_center(rc, k=kinit)
+        sim.set_umbrella_center(rc, k=kinit, target=rcref)
 
         if bool(args.flip):
             sim.set_umbrella_angle_norm(aca, aca1, aca2, bca, bca2, bca1, k=kinit)
