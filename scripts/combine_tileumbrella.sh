@@ -68,7 +68,7 @@ check_same_size "biasprod.skip.dcd across run dirs" "${skip_files[@]}"
 if (( nprotein > nca )); then
   mdconv -out biasprod.all.dcd "${skip_files[@]}"
 
-  awk '$1=="ATOM" && $3=="CA" {print NR}' "$pdb" > ca.atomlist
+  grep ATOM $pdb | awk '/ CA / {print NR}' > ca.atomlist
   mdconv -atomlist ca.atomlist -out ca.dcd biasprod.all.dcd
 else
   mdconv -out ca.dcd "${skip_files[@]}"
