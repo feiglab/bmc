@@ -140,7 +140,7 @@ label["bend"] = "Planar angle [deg]"
 label["twist"] = "Twisting angle [deg]"
 label["dist"] = "Distance [nm]"
 
-colors1d = ["blue", "red", "green", "orange", "magenta"]
+colors1d = ["blue", "red", "green", "orange", "magenta", "cyan", "brown", "pink", "lime"]
 
 plt.rcParams.update(
     {
