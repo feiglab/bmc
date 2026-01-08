@@ -2255,73 +2255,251 @@ def plot1D_combined(
     horizontal=None,
     save=None,
 ):
-    """Plot 1D PMFs; optionally average before plotting.
+    """Plot 1D PMFs.
 
-    If `average` is not None and `df` is a nested list or a dict of groups,
-    the group averages are plotted together (see `plot1D_grouped`).
+    Input handling
+    --------------
+    - plot1D_combined([d1, d2, d3], ...) plots each entry as an individual PMF.
+    - plot1D_combined([[d1, d2, d3]], ...) averages that group and plots the mean PMF.
+    - plot1D_combined([[d1, d2], d3, [d4, d5]], ...) averages groups and plots singles.
+
+    Averaging
+    ---------
+    - Explicit groups (list/tuple entries inside the top-level list) are averaged using
+      `average` if given, otherwise "boltzmann".
+    - If no explicit groups are present, setting `average` averages all provided PMFs
+      (optionally overlaying individuals via `average_overlay`).
     """
-    if average is not None:
-        if isinstance(df, dict) and "comb" not in df:
-            plot1D_grouped(
-                df,
-                tag,
-                average=average,
-                usembar=usembar,
-                minmax=minmax,
-                tics=tics,
-                label=label,
-                colors=colors,
-                key=key,
-                kbT=kbT,
-                nbins=nbins,
-                fmin=fmin,
-                fmax=fmax,
-                size=size,
-                markers=markers,
-                offset=offset,
-                matchflat=matchflat,
-                matchzero=matchzero,
-                average_overlay=average_overlay,
-                vertical=vertical,
-                horizontal=horizontal,
-                save=save,
-            )
-            return
-        if isinstance(df, (list, tuple)) and df and all(isinstance(g, (list, tuple)) for g in df):
-            plot1D_grouped(
-                df,
-                tag,
-                average=average,
-                usembar=usembar,
-                minmax=minmax,
-                tics=tics,
-                label=label,
-                colors=colors,
-                key=key,
-                kbT=kbT,
-                nbins=nbins,
-                fmin=fmin,
-                fmax=fmax,
-                size=size,
-                markers=markers,
-                offset=offset,
-                matchflat=matchflat,
-                matchzero=matchzero,
-                average_overlay=average_overlay,
-                vertical=vertical,
-                horizontal=horizontal,
-                save=save,
-            )
-            return
+    if isinstance(df, dict) and "comb" not in df:
+        avg_mode = average if average is not None else "boltzmann"
+        plot1D_grouped(
+            df,
+            tag,
+            average=avg_mode,
+            usembar=usembar,
+            minmax=minmax,
+            tics=tics,
+            label=label,
+            colors=colors,
+            key=key,
+            kbT=kbT,
+            nbins=nbins,
+            fmin=fmin,
+            fmax=fmax,
+            size=size,
+            markers=markers,
+            offset=offset,
+            matchflat=matchflat,
+            matchzero=matchzero,
+            average_overlay=average_overlay,
+            vertical=vertical,
+            horizontal=horizontal,
+            save=save,
+        )
+        return
 
+    top = list(df) if isinstance(df, (list, tuple)) else [df]
+
+    groups: list[list[dict]] = []
+    is_group: list[bool] = []
+    for it in top:
+        if _is_tiledata_dict(it):
+            groups.append([it])
+            is_group.append(False)
+            continue
+        if isinstance(it, (list, tuple)):
+            g = list(it)
+            if not g:
+                raise ValueError("plot1D_combined: empty group")
+            for d in g:
+                if not _is_tiledata_dict(d):
+                    raise TypeError("plot1D_combined: group entries must be tiledata dicts")
+            groups.append(g)
+            is_group.append(True)
+            continue
+        raise TypeError("plot1D_combined: df must be tiledata dicts or lists of them")
+
+    has_groups = any(is_group)
+    if has_groups:
+        avg_mode = average if average is not None else "boltzmann"
+
+        n_items = len(groups)
+        if key is not None and len(key) != n_items:
+            raise ValueError("plot1D_combined: key length must match top-level entries")
+
+        if isinstance(tag, list):
+            taglist = list(tag)
+            stag = taglist[0].rstrip("0123456789")
+        else:
+            taglist = None
+            stag = str(tag).rstrip("0123456789")
+
+        reps: list[dict] = []
+        rep_item: list[int] = []
+        for gi, g in enumerate(groups):
+            for d in g:
+                reps.append(d)
+                rep_item.append(gi)
+
+        vals = []
+        for d in reps:
+            if taglist is None:
+                vals.append(np.asarray(d["comb"][tag], float).ravel())
+            else:
+                for t in taglist:
+                    vals.append(np.asarray(d["comb"][t], float).ravel())
+
+        x = np.concatenate(vals)
+        x = x[np.isfinite(x)]
+        if x.size == 0:
+            raise ValueError("plot1D_combined: no finite values for common range")
+
+        xmin = float(np.min(x))
+        xmax = float(np.max(x))
+        pad = 1e-12 * (xmax - xmin + 1.0)
+        rang = (xmin, xmax + pad)
+
+        pmf_rep = []
+        ranges_rep = []
+        err_rep = []
+        for d in reps:
+            if taglist is not None:
+                dplotlist = []
+                for t in taglist:
+                    dp = d["comb"][[t, "ww"]].fillna(0).copy()
+                    dp.columns = [stag, "ww"]
+                    dplotlist.append(dp)
+                dplot = pd.concat(dplotlist, ignore_index=True)
+                res = pmf1d_from_weights(dplot, stag, nbins=nbins, kT=kbT, rang=rang)
+            else:
+                if usembar:
+                    res = pmf1d_mbar(
+                        d["mbar"],
+                        d["comb"],
+                        tag,
+                        nbins=nbins,
+                        kT=kbT,
+                        rang=rang,
+                    )
+                    if stag != tag:
+                        res["pmf"] = res["pmf"].rename(columns={tag: stag})
+                        if res["dpmf"] is not None:
+                            res["dpmf"] = res["dpmf"].rename(columns={tag: stag})
+                        res["ranges"] = res["ranges"].rename(columns={tag: stag})
+                else:
+                    dplot = d["comb"][[tag, "ww"]].fillna(0).copy()
+                    if stag != tag:
+                        dplot = dplot.rename(columns={tag: stag})
+                    res = pmf1d_from_weights(dplot, stag, nbins=nbins, kT=kbT, rang=rang)
+
+            pmf_rep.append(res["pmf"])
+            ranges_rep.append(res["ranges"])
+            err_rep.append(res["dpmf"])
+
+        n_rep = len(pmf_rep)
+        base_rep = [0.0] * n_rep
+        if offset is None:
+            pass
+        elif isinstance(offset, (float, int)):
+            base_rep = [float(offset)] * n_rep
+        else:
+            off = list(offset)
+            if len(off) == n_items:
+                base_rep = [float(off[rep_item[i]]) for i in range(n_rep)]
+            elif len(off) == n_rep:
+                base_rep = [float(off[i]) for i in range(n_rep)]
+            else:
+                base_rep = [float(off[i]) if i < len(off) else 0.0 for i in range(n_rep)]
+
+        for p, o in zip(pmf_rep, base_rep):
+            p[stag] = p[stag] + float(o)
+
+        extra = [0.0] * n_rep
+        if matchflat is not None and len(matchflat) == 2:
+            mmin, mmax = float(matchflat[0]), float(matchflat[1])
+            means = []
+            for p, r in zip(pmf_rep, ranges_rep):
+                mask = r[stag].between(mmin, mmax, inclusive="both")
+                m = p[stag][mask].mean()
+                means.append(float(m) if pd.notna(m) else 0.0)
+
+            if matchzero:
+                extra = [-m for m in means]
+            else:
+                mmax_val = max(means) if means else 0.0
+                extra = [mmax_val - m for m in means]
+
+        for p, o in zip(pmf_rep, extra):
+            p[stag] = p[stag] + float(o)
+
+        pmf_plot = []
+        ranges_plot = []
+        err_plot = []
+        colors_plot = []
+        key_plot = [] if key is not None else None
+
+        for gi in range(n_items):
+            idxs = [i for i, g in enumerate(rep_item) if g == gi]
+            col = colors[gi] if gi < len(colors) else (0.5, 0.5, 0.5)
+
+            if is_group[gi]:
+                if average_overlay:
+                    for ri in idxs:
+                        pmf_plot.append(pmf_rep[ri])
+                        ranges_plot.append(ranges_rep[ri])
+                        err_plot.append(None)
+                        colors_plot.append(col)
+                        if key_plot is not None:
+                            key_plot.append("_nolegend_")
+
+                avg = average_pmf1d(
+                    [pmf_rep[i] for i in idxs],
+                    [ranges_rep[i] for i in idxs],
+                    stag,
+                    method=avg_mode,
+                    kT=kbT,
+                )
+                pmf_plot.append(avg["pmf"])
+                ranges_plot.append(avg["ranges"])
+                err_plot.append(avg["dpmf"])
+                colors_plot.append(col)
+                if key_plot is not None:
+                    key_plot.append(key[gi])
+            else:
+                ri = idxs[0]
+                pmf_plot.append(pmf_rep[ri])
+                ranges_plot.append(ranges_rep[ri])
+                err_plot.append(err_rep[ri])
+                colors_plot.append(col)
+                if key_plot is not None:
+                    key_plot.append(key[gi])
+
+        dist1D(
+            pmf_plot,
+            ranges_plot,
+            err=err_plot,
+            size=size,
+            markers=markers,
+            tag=stag,
+            minmax=minmax,
+            tics=tics,
+            label=label,
+            fmin=fmin,
+            fmax=fmax,
+            colors=colors_plot,
+            key=key_plot,
+            vertical=vertical,
+            horizontal=horizontal,
+            save=save,
+        )
+        return
+
+    # no explicit groups: preserve the old behavior (plot individual or average all)
     pmf = []
     ranges = []
     err = []
 
-    if isinstance(df, list):
-        dflist = df
-    else:
-        dflist = [df]
+    dflist = top
 
     if isinstance(tag, list):
         taglist = list(tag)
@@ -2429,11 +2607,13 @@ def plot1D_combined(
             key_plot = None
             if key is not None:
                 key_plot = [average_key]
+        colors_plot = colors
     else:
         pmf_plot = pmf
         ranges_plot = ranges
         err_plot = err
         key_plot = key
+        colors_plot = colors
 
     dist1D(
         pmf_plot,
@@ -2447,7 +2627,7 @@ def plot1D_combined(
         label=label,
         fmin=fmin,
         fmax=fmax,
-        colors=colors,
+        colors=colors_plot,
         key=key_plot,
         vertical=vertical,
         horizontal=horizontal,
