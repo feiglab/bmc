@@ -1239,34 +1239,81 @@ def unbias_mbar(bias, *, kT=kb * T, counts=None, verbose=False):
     return {"mbar": mbar, "logW": logw, "ww": ww}
 
 
-def pmf1d_mbar(mbar, data, tag, *, kT=kb * T, nbins=100, verbose=False):
+def pmf1d_mbar(mbar, data, tag, *, kT=kb * T, nbins=100, rang=None, verbose=False):
+    """1D PMF via PyMBAR FES (histogram) with safe handling of empty bins.
+
+    Notes
+    -----
+    PyMBAR's FES.get_fes() raises KeyError when queried at histogram bins with
+    zero occupancy. We therefore query only occupied bins and fill the rest
+    with NaN.
+    """
     if "mbar" in mbar:
         mbar = mbar["mbar"]
 
     x = np.asarray(data[tag], float).ravel()
     u_n = np.zeros(x.shape[0], float)
-    eps = 1e-12 * (x.max() - x.min() + 1.0)
-    edges = [np.linspace(x.min(), x.max() + eps, nbins + 1)]
-    centers = 0.5 * (edges[0][:-1] + edges[0][1:])
+
+    if rang is None:
+        eps = 1e-12 * (float(x.max()) - float(x.min()) + 1.0)
+        edges_1d = np.linspace(float(x.min()), float(x.max()) + eps, nbins + 1)
+    else:
+        xmin, xmax = float(rang[0]), float(rang[1])
+        edges_1d = np.linspace(xmin, xmax, nbins + 1)
+
+    centers = 0.5 * (edges_1d[:-1] + edges_1d[1:])
 
     from pymbar import FES
 
-    fes = FES(mbar.u_kn, mbar.N_k, mbar_options=dict(verbose=verbose, maximum_iterations=500))
-    _ = fes.generate_fes(
-        u_n, x[:, None], fes_type="histogram", histogram_parameters={"bin_edges": edges}
+    fes = FES(
+        mbar.u_kn,
+        mbar.N_k,
+        mbar_options=dict(verbose=verbose, maximum_iterations=500),
     )
-    out = fes.get_fes(centers, reference_point="from-lowest", uncertainty_method="analytical")
+    _ = fes.generate_fes(
+        u_n,
+        x[:, None],
+        fes_type="histogram",
+        histogram_parameters={"bin_edges": [edges_1d]},
+    )
 
-    F_kT = out["f_i"] * kT
-    dF_kT = out.get("df_i") * kT
+    hist, _ = np.histogram(x, bins=edges_1d)
+    occ = hist > 0
+    if not np.any(occ):
+        raise ValueError("pmf1d_mbar: no occupied bins (check input data/range)")
+
+    centers_occ = centers[occ]
+    out = fes.get_fes(
+        centers_occ,
+        reference_point="from-lowest",
+        uncertainty_method="analytical",
+    )
+
+    f_i = np.full(centers.shape, np.nan, dtype=float)
+    df_i = np.full(centers.shape, np.nan, dtype=float)
+    f_i[occ] = np.asarray(out["f_i"], float).ravel()
+    if out.get("df_i") is not None:
+        df_i[occ] = np.asarray(out["df_i"], float).ravel()
+
+    F_kT = f_i * float(kT)
+    dF_kT = df_i * float(kT)
+
+    if np.any(np.isfinite(F_kT)):
+        F_kT = F_kT - np.nanmin(F_kT)
 
     idx = pd.Index(np.arange(nbins), name="x")
     pmf1d = pd.DataFrame({f"{tag}": F_kT}, index=idx)
     dpmf = pd.DataFrame({f"{tag}": dF_kT}, index=idx)
-    ranges = pd.DataFrame({tag: centers})
+    ranges = pd.DataFrame({tag: centers}, index=idx)
 
     return dict(
-        edges=edges, centers=centers, F_kT=F_kT, dF_kT=dF_kT, pmf=pmf1d, dpmf=dpmf, ranges=ranges
+        edges=[edges_1d],
+        centers=centers,
+        F_kT=F_kT,
+        dF_kT=dF_kT,
+        pmf=pmf1d,
+        dpmf=dpmf,
+        ranges=ranges,
     )
 
 
@@ -1799,6 +1846,389 @@ def plot2D_individual(
     )
 
 
+def _is_tiledata_dict(obj) -> bool:
+    return isinstance(obj, dict) and "comb" in obj
+
+
+def _nanmean_axis(a: np.ndarray, axis: int = 0) -> np.ndarray:
+    a = np.asarray(a, float)
+    mask = np.isfinite(a)
+    n = np.sum(mask, axis=axis)
+    s = np.sum(np.where(mask, a, 0.0), axis=axis)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        mean = s / n
+    mean = np.where(n > 0, mean, np.nan)
+    return mean
+
+
+def _nansem_axis(a: np.ndarray, axis: int = 0) -> np.ndarray:
+    a = np.asarray(a, float)
+    mask = np.isfinite(a)
+    n = np.sum(mask, axis=axis)
+
+    s = np.sum(np.where(mask, a, 0.0), axis=axis)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        mean = s / n
+    mean = np.where(n > 0, mean, np.nan)
+
+    mean_exp = np.expand_dims(mean, axis=axis)
+    dev = np.where(mask, a - mean_exp, 0.0)
+    ss = np.sum(dev * dev, axis=axis)
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        var = ss / (n - 1)
+    var = np.where(n > 1, var, np.nan)
+
+    sd = np.sqrt(var)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        sem = sd / np.sqrt(n)
+    sem = np.where(n > 1, sem, np.nan)
+    return sem
+
+
+def _interp_to_grid(x_ref: np.ndarray, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    x = np.asarray(x, float).ravel()
+    y = np.asarray(y, float).ravel()
+    if x.size == 0 or y.size == 0:
+        return np.full(x_ref.shape, np.nan, dtype=float)
+
+    order = np.argsort(x)
+    x = x[order]
+    y = y[order]
+    with np.errstate(invalid="ignore"):
+        return np.interp(x_ref, x, y, left=np.nan, right=np.nan)
+
+
+def average_pmf1d(pmf, ranges, tag, *, method="linear", kT=kb * T):
+    """Average 1D PMFs on a common grid.
+
+    Parameters
+    ----------
+    pmf : list[pd.DataFrame]
+        Each dataframe has a column `tag` with free energies (kJ/mol).
+    ranges : list[pd.DataFrame]
+        Each dataframe has a column `tag` with bin centers.
+    tag : str
+        Column name for x / PMF.
+    method : {"linear","boltzmann"}
+        Linear averages free energies; boltzmann averages exp(-F/kT).
+    kT : float
+        Thermal energy in same units as free energies (kJ/mol).
+
+    Returns
+    -------
+    dict with keys: pmf, dpmf, ranges
+        dpmf contains SEM (per bin) across the input PMFs.
+    """
+    if len(pmf) != len(ranges):
+        raise ValueError("average_pmf1d: pmf and ranges length mismatch")
+    if len(pmf) == 0:
+        raise ValueError("average_pmf1d: empty input")
+
+    m = str(method).lower().strip()
+    if m in {"linear", "fe", "free_energy"}:
+        mode = "linear"
+    elif m in {"boltzmann", "boltz", "exp"}:
+        mode = "boltzmann"
+    else:
+        raise ValueError(f"average_pmf1d: unknown method {method!r}")
+
+    x_ref = np.asarray(ranges[0][tag], float).ravel()
+    if x_ref.size == 0:
+        raise ValueError("average_pmf1d: empty grid")
+
+    y_stack = []
+    for p, r in zip(pmf, ranges):
+        x = np.asarray(r[tag], float).ravel()
+        y = np.asarray(p[tag], float).ravel()
+        if x.shape != x_ref.shape or not np.allclose(x, x_ref, atol=1e-9, rtol=0.0):
+            y = _interp_to_grid(x_ref, x, y)
+        y_stack.append(y)
+
+    Y = np.vstack(y_stack)  # (nrep, nbins)
+
+    if mode == "linear":
+        mean = _nanmean_axis(Y, axis=0)
+        sem = _nansem_axis(Y, axis=0)
+    else:
+        with np.errstate(over="ignore", invalid="ignore", under="ignore"):
+            W = np.exp(-Y / float(kT))
+        mean_w = _nanmean_axis(W, axis=0)
+        sem_w = _nansem_axis(W, axis=0)
+
+        mean = np.full(mean_w.shape, np.nan, dtype=float)
+        sem = np.full(mean_w.shape, np.nan, dtype=float)
+
+        ok = np.isfinite(mean_w) & (mean_w > 0.0)
+        mean[ok] = -float(kT) * np.log(mean_w[ok])
+        sem[ok] = float(kT) * sem_w[ok] / mean_w[ok]
+
+    idx = pmf[0].index
+    pmf_avg = pd.DataFrame({tag: mean}, index=idx)
+    dpmf_avg = pd.DataFrame({tag: sem}, index=idx)
+    ranges_avg = pd.DataFrame({tag: x_ref}, index=idx)
+
+    return {"pmf": pmf_avg, "dpmf": dpmf_avg, "ranges": ranges_avg}
+
+
+def plot1D_grouped(
+    groups,
+    tag="dist",
+    *,
+    average="boltzmann",
+    usembar=False,
+    minmax=minmax,
+    tics=tics,
+    label=label,
+    colors=colors1d,
+    key=None,
+    kbT=kb * T,
+    nbins=50,
+    fmin=0.0,
+    fmax=20.0,
+    size=1.5,
+    markers=None,
+    offset=None,
+    matchflat=None,
+    matchzero=False,
+    average_overlay=False,
+    vertical=None,
+    horizontal=None,
+    save=None,
+):
+    """Average replicate PMFs per group and plot group averages together.
+
+    `groups` can be:
+      - list[list[tiledata]]  (each inner list is a group of replicate datasets)
+      - dict[str, list[tiledata]]  (group name -> replicate datasets)
+
+    When `average_overlay=True`, individual replicate PMFs are plotted (no error
+    shading) along with the group averages (with SEM shading).
+    """
+    if isinstance(groups, dict) and "comb" not in groups:
+        group_names = list(groups.keys())
+        group_list = list(groups.values())
+    else:
+        group_names = None
+        group_list = list(groups) if isinstance(groups, (list, tuple)) else [groups]
+
+    norm_groups = []
+    for g in group_list:
+        if _is_tiledata_dict(g):
+            norm_groups.append([g])
+        else:
+            norm_groups.append(list(g))
+
+    for g in norm_groups:
+        if not g:
+            raise ValueError("plot1D_grouped: empty group")
+        for d in g:
+            if not _is_tiledata_dict(d):
+                raise TypeError("plot1D_grouped: group entries must be tiledata dicts")
+
+    n_groups = len(norm_groups)
+    if group_names is None:
+        if key is not None:
+            if len(key) != n_groups:
+                raise ValueError("plot1D_grouped: key length mismatch")
+            group_names = list(key)
+        else:
+            group_names = [f"group{i+1}" for i in range(n_groups)]
+    else:
+        if key is not None:
+            if len(key) != n_groups:
+                raise ValueError("plot1D_grouped: key length mismatch")
+            group_names = list(key)
+
+    reps = []
+    rep_group = []
+    for gi, g in enumerate(norm_groups):
+        for d in g:
+            reps.append(d)
+            rep_group.append(gi)
+
+    if isinstance(tag, list):
+        taglist = list(tag)
+        stag = taglist[0].rstrip("0123456789")
+    else:
+        taglist = None
+        stag = str(tag).rstrip("0123456789")
+
+    vals = []
+    for d in reps:
+        if taglist is None:
+            vals.append(np.asarray(d["comb"][tag], float).ravel())
+        else:
+            for t in taglist:
+                vals.append(np.asarray(d["comb"][t], float).ravel())
+
+    x = np.concatenate(vals)
+    x = x[np.isfinite(x)]
+    if x.size == 0:
+        raise ValueError("plot1D_grouped: no finite values for common range")
+
+    xmin = float(np.min(x))
+    xmax = float(np.max(x))
+    pad = 1e-12 * (xmax - xmin + 1.0)
+    rang = (xmin, xmax + pad)
+
+    pmf_rep = []
+    ranges_rep = []
+    err_rep = []
+
+    for d in reps:
+        if taglist is not None:
+            dplotlist = []
+            for t in taglist:
+                dp = d["comb"][[t, "ww"]].fillna(0).copy()
+                dp.columns = [stag, "ww"]
+                dplotlist.append(dp)
+            dplot = pd.concat(dplotlist, ignore_index=True)
+            res = pmf1d_from_weights(dplot, stag, nbins=nbins, kT=kbT, rang=rang)
+        else:
+            if usembar:
+                res = pmf1d_mbar(
+                    d["mbar"],
+                    d["comb"],
+                    tag,
+                    nbins=nbins,
+                    kT=kbT,
+                    rang=rang,
+                )
+                if stag != tag:
+                    res["pmf"] = res["pmf"].rename(columns={tag: stag})
+                    if res["dpmf"] is not None:
+                        res["dpmf"] = res["dpmf"].rename(columns={tag: stag})
+                    res["ranges"] = res["ranges"].rename(columns={tag: stag})
+            else:
+                dplot = d["comb"][[tag, "ww"]].fillna(0).copy()
+                if stag != tag:
+                    dplot = dplot.rename(columns={tag: stag})
+                res = pmf1d_from_weights(dplot, stag, nbins=nbins, kT=kbT, rang=rang)
+
+        pmf_rep.append(res["pmf"])
+        ranges_rep.append(res["ranges"])
+        err_rep.append(res["dpmf"])
+
+    n_rep = len(pmf_rep)
+
+    base_rep = [0.0] * n_rep
+    base_grp = [0.0] * n_groups
+    if offset is None:
+        pass
+    elif isinstance(offset, (float, int)):
+        base_rep = [float(offset)] * n_rep
+    else:
+        off = list(offset)
+        if len(off) == n_rep:
+            base_rep = [float(off[i]) for i in range(n_rep)]
+        elif len(off) == n_groups:
+            base_grp = [float(off[i]) for i in range(n_groups)]
+        else:
+            base_rep = [float(off[i]) if i < len(off) else 0.0 for i in range(n_rep)]
+
+    for p, o in zip(pmf_rep, base_rep):
+        p[stag] = p[stag] + float(o)
+
+    extra = [0.0] * n_rep
+    if matchflat is not None and len(matchflat) == 2:
+        mmin, mmax = float(matchflat[0]), float(matchflat[1])
+
+        means = []
+        for p, r in zip(pmf_rep, ranges_rep):
+            mask = r[stag].between(mmin, mmax, inclusive="both")
+            m = p[stag][mask].mean()
+            means.append(float(m) if pd.notna(m) else 0.0)
+
+        if matchzero:
+            extra = [-m for m in means]
+        else:
+            mmax_val = max(means) if means else 0.0
+            extra = [mmax_val - m for m in means]
+
+    for p, o in zip(pmf_rep, extra):
+        p[stag] = p[stag] + float(o)
+
+    pmf_grp = []
+    ranges_grp = []
+    err_grp = []
+    for gi in range(n_groups):
+        idxs = [i for i, g in enumerate(rep_group) if g == gi]
+        pmfs = [pmf_rep[i] for i in idxs]
+        rngs = [ranges_rep[i] for i in idxs]
+
+        avg = average_pmf1d(pmfs, rngs, stag, method=average, kT=kbT)
+        if base_grp[gi] != 0.0:
+            avg["pmf"][stag] = avg["pmf"][stag] + float(base_grp[gi])
+
+        pmf_grp.append(avg["pmf"])
+        ranges_grp.append(avg["ranges"])
+        err_grp.append(avg["dpmf"])
+
+    if average_overlay:
+        pmf_plot = []
+        ranges_plot = []
+        err_plot = []
+        key_plot = []
+        colors_plot = []
+
+        for gi in range(n_groups):
+            idxs = [i for i, g in enumerate(rep_group) if g == gi]
+            col = colors[gi] if gi < len(colors) else (0.5, 0.5, 0.5)
+
+            for i in idxs:
+                pmf_plot.append(pmf_rep[i])
+                ranges_plot.append(ranges_rep[i])
+                err_plot.append(None)
+                key_plot.append("_nolegend_")
+                colors_plot.append(col)
+
+            pmf_plot.append(pmf_grp[gi])
+            ranges_plot.append(ranges_grp[gi])
+            err_plot.append(err_grp[gi])
+            key_plot.append(group_names[gi])
+            colors_plot.append(col)
+
+        dist1D(
+            pmf_plot,
+            ranges_plot,
+            err=err_plot,
+            size=size,
+            markers=markers,
+            tag=stag,
+            minmax=minmax,
+            tics=tics,
+            label=label,
+            fmin=fmin,
+            fmax=fmax,
+            colors=colors_plot,
+            key=key_plot,
+            vertical=vertical,
+            horizontal=horizontal,
+            save=save,
+        )
+        return
+
+    dist1D(
+        pmf_grp,
+        ranges_grp,
+        err=err_grp,
+        size=size,
+        markers=markers,
+        tag=stag,
+        minmax=minmax,
+        tics=tics,
+        label=label,
+        fmin=fmin,
+        fmax=fmax,
+        colors=colors,
+        key=group_names,
+        vertical=vertical,
+        horizontal=horizontal,
+        save=save,
+    )
+
+
 def plot1D_combined(
     df,
     tag="dist",
@@ -1818,10 +2248,72 @@ def plot1D_combined(
     offset=None,
     matchflat=None,
     matchzero=False,
+    average=None,
+    average_overlay=False,
+    average_key="avg",
     vertical=None,
     horizontal=None,
     save=None,
 ):
+    """Plot 1D PMFs; optionally average before plotting.
+
+    If `average` is not None and `df` is a nested list or a dict of groups,
+    the group averages are plotted together (see `plot1D_grouped`).
+    """
+    if average is not None:
+        if isinstance(df, dict) and "comb" not in df:
+            plot1D_grouped(
+                df,
+                tag,
+                average=average,
+                usembar=usembar,
+                minmax=minmax,
+                tics=tics,
+                label=label,
+                colors=colors,
+                key=key,
+                kbT=kbT,
+                nbins=nbins,
+                fmin=fmin,
+                fmax=fmax,
+                size=size,
+                markers=markers,
+                offset=offset,
+                matchflat=matchflat,
+                matchzero=matchzero,
+                average_overlay=average_overlay,
+                vertical=vertical,
+                horizontal=horizontal,
+                save=save,
+            )
+            return
+        if isinstance(df, (list, tuple)) and df and all(isinstance(g, (list, tuple)) for g in df):
+            plot1D_grouped(
+                df,
+                tag,
+                average=average,
+                usembar=usembar,
+                minmax=minmax,
+                tics=tics,
+                label=label,
+                colors=colors,
+                key=key,
+                kbT=kbT,
+                nbins=nbins,
+                fmin=fmin,
+                fmax=fmax,
+                size=size,
+                markers=markers,
+                offset=offset,
+                matchflat=matchflat,
+                matchzero=matchzero,
+                average_overlay=average_overlay,
+                vertical=vertical,
+                horizontal=horizontal,
+                save=save,
+            )
+            return
+
     pmf = []
     ranges = []
     err = []
@@ -1831,40 +2323,82 @@ def plot1D_combined(
     else:
         dflist = [df]
 
-    for i, d in enumerate(dflist):
-        if isinstance(tag, list):
-            stag = tag[0].rstrip("0123456789")
-            dplotlist = []
-            for k in range(len(tag)):
-                dp = d["comb"][[tag[k], "ww"]].fillna(0)
-                dp.columns = [stag, "ww"]
-                dplotlist += [dp]
-            dplot = pd.concat(dplotlist)
-            res = pmf1d_from_weights(dplot, stag)
-        else:
-            stag = tag.rstrip("0123456789")
-            if usembar:
-                res = pmf1d_mbar(d["mbar"], d["comb"], tag, nbins=nbins)
-            else:
-                dplot = d["comb"][[tag, "ww"]].fillna(0)
-                res = pmf1d_from_weights(dplot, tag, nbins=nbins)
+    if isinstance(tag, list):
+        taglist = list(tag)
+        stag = taglist[0].rstrip("0123456789")
+    else:
+        taglist = None
+        stag = str(tag).rstrip("0123456789")
 
-        pmf += [res["pmf"]]
-        ranges += [res["ranges"]]
-        err += [res["dpmf"]]
+    rang = None
+    if average is not None:
+        vals = []
+        for d in dflist:
+            if taglist is None:
+                vals.append(np.asarray(d["comb"][tag], float).ravel())
+            else:
+                for t in taglist:
+                    vals.append(np.asarray(d["comb"][t], float).ravel())
+        x = np.concatenate(vals)
+        x = x[np.isfinite(x)]
+        if x.size == 0:
+            raise ValueError("plot1D_combined: no finite values for common range")
+        xmin = float(np.min(x))
+        xmax = float(np.max(x))
+        pad = 1e-12 * (xmax - xmin + 1.0)
+        rang = (xmin, xmax + pad)
+
+    for d in dflist:
+        if taglist is not None:
+            dplotlist = []
+            for t in taglist:
+                dp = d["comb"][[t, "ww"]].fillna(0).copy()
+                dp.columns = [stag, "ww"]
+                dplotlist.append(dp)
+            dplot = pd.concat(dplotlist, ignore_index=True)
+            res = pmf1d_from_weights(dplot, stag, nbins=nbins, kT=kbT, rang=rang)
+        else:
+            if usembar:
+                res = pmf1d_mbar(
+                    d["mbar"],
+                    d["comb"],
+                    tag,
+                    nbins=nbins,
+                    kT=kbT,
+                    rang=rang,
+                )
+                if stag != tag:
+                    res["pmf"] = res["pmf"].rename(columns={tag: stag})
+                    if res["dpmf"] is not None:
+                        res["dpmf"] = res["dpmf"].rename(columns={tag: stag})
+                    res["ranges"] = res["ranges"].rename(columns={tag: stag})
+            else:
+                dplot = d["comb"][[tag, "ww"]].fillna(0).copy()
+                if stag != tag:
+                    dplot = dplot.rename(columns={tag: stag})
+                res = pmf1d_from_weights(dplot, stag, nbins=nbins, kT=kbT, rang=rang)
+
+        pmf.append(res["pmf"])
+        ranges.append(res["ranges"])
+        err.append(res["dpmf"])
 
     n = len(pmf)
 
-    base = [offset[i] if (offset is not None and i < len(offset)) else 0.0 for i in range(n)]
+    if offset is None:
+        base = [0.0] * n
+    elif isinstance(offset, (float, int)):
+        base = [float(offset)] * n
+    else:
+        base = [float(offset[i]) if i < len(offset) else 0.0 for i in range(n)]
 
     extra = [0.0] * n
     if matchflat is not None and len(matchflat) == 2:
-        mmin, mmax = matchflat
+        mmin, mmax = float(matchflat[0]), float(matchflat[1])
 
         means = []
         for p, r in zip(pmf, ranges):
-            mask = r[tag].between(mmin, mmax, inclusive="both")
-            m = p[tag][mask].mean()
+            mask = r[stag].between(mmin, mmax, inclusive="both")
+            m = p[stag][mask].mean()
             means.append(float(m) if pd.notna(m) else 0.0)
 
         if matchzero:
@@ -1874,14 +2408,37 @@ def plot1D_combined(
             extra = [mmax_val - m for m in means]
 
     total = [b + e for b, e in zip(base, extra)]
-
     for p, o in zip(pmf, total):
-        p[tag] = p[tag] + o
+        p[stag] = p[stag] + float(o)
+
+    if average is not None:
+        avg = average_pmf1d(pmf, ranges, stag, method=average, kT=kbT)
+        if average_overlay:
+            pmf_plot = pmf + [avg["pmf"]]
+            ranges_plot = ranges + [avg["ranges"]]
+            err_plot = [None] * len(pmf) + [avg["dpmf"]]
+
+            key_plot = None
+            if key is not None:
+                key_plot = list(key) + [average_key]
+        else:
+            pmf_plot = [avg["pmf"]]
+            ranges_plot = [avg["ranges"]]
+            err_plot = [avg["dpmf"]]
+
+            key_plot = None
+            if key is not None:
+                key_plot = [average_key]
+    else:
+        pmf_plot = pmf
+        ranges_plot = ranges
+        err_plot = err
+        key_plot = key
 
     dist1D(
-        pmf,
-        ranges,
-        err=err,
+        pmf_plot,
+        ranges_plot,
+        err=err_plot,
         size=size,
         markers=markers,
         tag=stag,
@@ -1891,7 +2448,7 @@ def plot1D_combined(
         fmin=fmin,
         fmax=fmax,
         colors=colors,
-        key=key,
+        key=key_plot,
         vertical=vertical,
         horizontal=horizontal,
         save=save,
