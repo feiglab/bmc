@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --partition=all
+#SBATCH --partition=QUEUE
 #SBATCH --gres=gpu:1
 #SBATCH --time=03:50:00
 #SBATCH --output="DIR/BDIR/slurm.prod.out"

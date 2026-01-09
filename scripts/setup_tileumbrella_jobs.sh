@@ -1,10 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-mode_arg=${1:-}
-nsteps_arg=${2:-}
-maxrun_arg=${3:-}
-workdir_arg=${4:-}
+queue_arg=${1:-}
+mode_arg=${2:-}
+nsteps_arg=${3:-}
+maxrun_arg=${4:-}
+workdir_arg=${5:-}
 
 if [[ -n "$workdir_arg" && -d "$workdir_arg" ]]; then
     cd -- "$workdir_arg"
@@ -12,8 +13,10 @@ fi
 
 # --- read defaults from config (if present) ---
 default_mode=allatom
+default_queue=all
 cfg_nsteps=""
 cfg_maxrun=""
+cfg_queue=""
 
 if [[ -r config ]]; then
     cfg_mode=$(
@@ -25,10 +28,16 @@ if [[ -r config ]]; then
     cfg_maxrun=$(
         awk '$1=="maxrun" && NF>=2 { print $2; exit }' config
     )
+    cfg_queue=$(
+        awk '$1=="queue" && NF>=2 { print $2; exit }' config
+    )
     if [[ -n "${cfg_mode:-}" ]]; then
         default_mode=$cfg_mode
     fi
 fi
+
+[[ -n "${cfg_queue:-}" ]] && default_queue=$cfg_queue
+queue=${queue_arg:-$default_queue}
 
 mode=${mode_arg:-$default_mode}
 
@@ -73,6 +82,7 @@ for n in run_?.??; do
     -e "s/BDIR/$n/g" \
     -e "s|DIR|$dir_esc|g" \
     -e "s/TAG/$tag/g" \
+    -e "s/QUEUE/$queue/g" \
     -e "s/NSTEPS/$nsteps/g" \
     "$template" > "$n/job.prodbias.slurm"
 done
