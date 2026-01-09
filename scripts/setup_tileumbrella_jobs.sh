@@ -71,10 +71,15 @@ if [[ ! -r $template ]]; then
    exit 1
 fi
 
-echo "$maxrun" > maxrun
+if [[ ! -r "$maxrun" ]]; then
+   echo "$maxrun" > maxrun
+fi
+
 for n in run_?.??; do
   biasval=${n#run_}
-  echo 0 > "$n/last"
+  if [[ ! -r "$n/last" ]]; then
+     echo 0 > "$n/last"
+  fi
 
   sed \
     -e "s/BIAS/$biasval/g" \
