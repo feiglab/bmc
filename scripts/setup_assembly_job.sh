@@ -75,6 +75,9 @@ if [[ ! -r "last" ]]; then
    echo 0 > "last"
 fi
 
+echo $dir_esc
+echo $tag
+
 sed \
   -e "s|DIR|$dir_esc|g" \
   -e "s/TAG/$tag/g" \
