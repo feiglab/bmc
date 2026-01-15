@@ -29,6 +29,8 @@ prep_tileumbrella = "bmc.cli.prep_tileumbrella:main"
 equi_tileumbrella = "bmc.cli.equi_tileumbrella:main"
 initbias_tileumbrella = "bmc.cli.initbias_tileumbrella:main"
 calc_comp_cocomo = "bmc.cli.calc_comp_cocomo:main"
+assembly = "bmc.cli.assembly:main"
+prep_assembly = "bmc.cli.prep_assembly:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -39,6 +41,9 @@ script-files = [
   "scripts/setup_tileumbrella_jobs.sh",
   "scripts/submit_tileumbrella_jobs.sh",
   "scripts/job.tileumbrella.slurm.template",
+  "scripts/run_assembly.sh",
+  "scripts/setup_assembly_jobs.sh",
+  "scripts/job.assembly.slurm.template",
 ]
 
 [tool.setuptools.packages.find]
