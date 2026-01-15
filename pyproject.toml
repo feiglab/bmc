@@ -42,7 +42,7 @@ script-files = [
   "scripts/submit_tileumbrella_jobs.sh",
   "scripts/job.tileumbrella.slurm.template",
   "scripts/run_assembly.sh",
-  "scripts/setup_assembly_jobs.sh",
+  "scripts/setup_assembly_job.sh",
   "scripts/job.assembly.slurm.template",
 ]
 
