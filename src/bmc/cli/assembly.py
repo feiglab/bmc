@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+from pathlib import Path
 
 from cocomo import COCOMO
 
@@ -73,11 +74,11 @@ def main() -> None:
         raise SystemExit("ERROR: --run must be >= 0")
 
     last = args.nrun - 1
-    restart = f"restart_{last}.xml"
+    restart = Path(f"restart_{last}.xml")
     if not restart.is_file():
         raise SystemExit(f"ERROR: restart file does not exist: {restart}")
 
-    sysxml = "system.xml"
+    sysxml = Path("system.xml")
     if not sysxml.is_file():
         raise SystemExit(f"ERROR: system xml does not exist: {sysxml}")
 
@@ -98,7 +99,7 @@ def main() -> None:
         logfile=str(f"run_{nrun}.log"),
         dcdfile=str(f"run_{nrun}.dcd"),
     )
-    sim.write_state(str(f"restart_{nrun}.xml"))
+    sim.write_state(f"restart_{nrun}.xml")
 
 
 if __name__ == "__main__":
