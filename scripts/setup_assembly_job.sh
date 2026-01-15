@@ -40,8 +40,8 @@ default_maxrun=1
 nsteps=${nsteps_arg:-$default_nsteps}
 maxrun=${maxrun_arg:-$default_maxrun}
 
-cur_base=$(basename -- "$PWD")              # e.g. set1
-parent=$(basename -- "$(dirname -- "$PWD")")# e.g. ht
+cur_base=$(basename -- "$PWD")               # e.g. set1
+parent=$(basename -- "$(dirname -- "$PWD")") # e.g. ht
 
 if [[ "$cur_base" != set* ]]; then
   echo "error: expected current dir name like 'setN', got '$cur_base' (PWD=$PWD)" >&2
