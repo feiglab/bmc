@@ -63,7 +63,8 @@ fi
 if grep -qE 'CUDA_ERROR|No compatible CUDA device' "error.out"; then
   scontrol update "NodeName=$gpu" State=DRAIN Reason=gpudown || true
   echo "ok" > "requeue"
-  sleep 5 
+  echo gpu $gpu put in drain mode >&2
+  sleep 5
   exit 0
 fi
 
