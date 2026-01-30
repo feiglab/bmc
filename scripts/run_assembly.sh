@@ -53,6 +53,8 @@ if (( py_rc != 0 )); then
   echo "assembly.py exited with code $py_rc" >&2
 fi
 
+sleep 5
+
 # Hard failure: illegal address -> don't requeue automatically
 if grep -qE 'CUDA_ERROR_ILLEGAL_ADDRESS' "error.out"; then
   echo "problem with simulation (CUDA_ERROR_ILLEGAL_ADDRESS)" >&2
