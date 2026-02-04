@@ -44,14 +44,16 @@ rm -f "requeue"
 touch "$lock"
 
 # call to program to do the work
+set +e
 assembly --run "$next" --nstep "$nstep" --tstep "$tstep" --gamma "$gamma" >"run.out" 2>"error.out"
-
 py_rc=$?
 
 # If python itself failed, treat as error (still allow CUDA parsing below)
 if (( py_rc != 0 )); then
   echo "assembly.py exited with code $py_rc" >&2
 fi
+
+set -e
 
 sleep 5
 

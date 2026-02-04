@@ -60,6 +60,7 @@ touch "$lock"
 #script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 
 # call to program to do the work
+set +e
 tileumbrella --mode "$mode" --bias "$bias" --run "$next" --nstep "$nstep" --tstep "$tstep" --gamma "$gamma" >"$tdir/run.out" 2>"$tdir/error.out"
 
 py_rc=$?
@@ -68,6 +69,7 @@ py_rc=$?
 if (( py_rc != 0 )); then
   echo "tileumbrella.py exited with code $py_rc" >&2
 fi
+set -e
 
 sleep 5
 
