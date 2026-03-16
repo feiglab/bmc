@@ -47,7 +47,7 @@ nprotein="$(grep -c '^ATOM' "$pdb")"
 grep -E '( CA |TER|END)' "$pdb" > CA.pdb
 nca="$(grep -c '^ATOM' CA.pdb)"
 
-for rundir in run_?.??; do
+for rundir in run_*; do
   [[ -d "$rundir" ]] || continue
   (
     cd -- "$rundir"
@@ -60,7 +60,7 @@ for rundir in run_?.??; do
   )
 done
 
-skip_files=(run_?.??/biasprod.skip.dcd)
+skip_files=(run_*/biasprod.skip.dcd)
 ((${#skip_files[@]})) || die "No run_*/biasprod.skip.dcd files found."
 
 check_same_size "biasprod.skip.dcd across run dirs" "${skip_files[@]}"
