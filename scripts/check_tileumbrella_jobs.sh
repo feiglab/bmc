@@ -4,7 +4,7 @@ shopt -s nullglob
 
 tag="${1:-biasprod}"
 
-for n in run_?.??; do
+for n in run_*; do
   # Only process directories
   [[ -d "$n" ]] || continue
 
