@@ -624,15 +624,21 @@ def main() -> None:
 
         if biasdir == "x":
             sim.update_umbrella_xyz_distance("x", kbias)
-            sim.update_umbrella_xyz_distance("y", kdisty)
-            sim.update_umbrella_xyz_distance("z", kdistz)
+            if kdisty > keps:
+                sim.update_umbrella_xyz_distance("y", kdisty)
+            if kdistz > keps:
+                sim.update_umbrella_xyz_distance("z", kdistz)
         elif biasdir == "y":
-            sim.update_umbrella_xyz_distance("x", kdistx)
+            if kdistx > keps:
+                sim.update_umbrella_xyz_distance("x", kdistx)
             sim.update_umbrella_xyz_distance("y", kbias)
-            sim.update_umbrella_xyz_distance("z", kdistz)
+            if kdistz > keps:
+                sim.update_umbrella_xyz_distance("z", kdistz)
         elif biasdir == "z":
-            sim.update_umbrella_xyz_distance("x", kdistx)
-            sim.update_umbrella_xyz_distance("y", kdisty)
+            if kdistx > keps:
+                sim.update_umbrella_xyz_distance("x", kdistx)
+            if kdisty > keps:
+                sim.update_umbrella_xyz_distance("y", kdisty)
             sim.update_umbrella_xyz_distance("z", kbias)
         else:
             raise SystemExit(f"ERROR: invalid biasdir {biasdir}")
