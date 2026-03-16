@@ -39,17 +39,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     p.add_argument(
         "--bias",
-        dest="biasval",
-        type=float,
-        default=6.00,
-        help="Bias value (nm or model units, same as directory tag)",
-    )
-    p.add_argument(
-        "--biasangle",
-        dest="biasangle",
-        type=float,
-        default=None,
-        help="Bias angle value (degrees)",
+        dest="biasstr",
+        type=str,
+        default="6.00",
+        help="One or two bias values (nm or nm:degree))",
     )
 
     p.add_argument(
@@ -116,15 +109,32 @@ def main() -> None:
     args = _parse_args()
 
     mode = str(args.mode).lower()
-    biasval = float(args.biasval)
+
+    biasstr = args.biasstr.strip()
+
+    parts = None
+    for sep in (":", "_"):
+        if sep in biasstr:
+            parts = [p.strip() for p in biasstr.split(sep)]
+            break
+
+    if parts is None:
+        biasval = float(biasstr)
+        biasangleval = None
+    elif len(parts) == 2:
+        biasval = float(parts[0])
+        biasangleval = float(parts[1])
+    else:
+        raise SystemExit(
+            "ERROR: --biasstr must be 'bias' or 'bias:biasangle' " "or 'bias_biasangle'"
+        )
 
     if not (1.0 <= biasval <= 20.0):
-        raise SystemExit("ERROR: --bias must be in [1.0, 20.0]")
+        raise SystemExit("ERROR: bias must be in [1.0, 20.0]")
 
-    if args.biasangle is not None:
-        biasangleval = float(args.biasangle)
+    if biasangleval is not None:
         if not (-180.0 <= biasangleval <= 180.0):
-            raise SystemExit("ERROR: --biasangle must be in [-180.0, 180.0]")
+            raise SystemExit("ERROR: biasangle must be in [-180.0, 180.0]")
 
         tag = f"{biasval:.2f}_{biasangleval:.0f}"
     else:

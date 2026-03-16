@@ -75,7 +75,7 @@ if [[ ! -r "$maxrun" ]]; then
    echo "$maxrun" > maxrun
 fi
 
-for n in run_?.??; do
+for n in run_*; do
   biasval=${n#run_}
   if [[ ! -r "$n/last" ]]; then
      echo 0 > "$n/last"
