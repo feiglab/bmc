@@ -170,7 +170,7 @@ def main() -> None:
         gamma=float(args.gamma),
     )
 
-    if args.biasangle is None:
+    if biasangleval is None:
         biaslist = [
             "Umbrella_x",
             "Umbrella_y",
