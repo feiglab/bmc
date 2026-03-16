@@ -45,6 +45,14 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Bias value (nm or model units, same as directory tag)",
     )
     p.add_argument(
+        "--biasangle",
+        dest="biasangle",
+        type=float,
+        default=None,
+        help="Bias angle value (degrees)",
+    )
+
+    p.add_argument(
         "--run",
         dest="nrun",
         type=int,
@@ -113,14 +121,22 @@ def main() -> None:
     if not (1.0 <= biasval <= 20.0):
         raise SystemExit("ERROR: --bias must be in [1.0, 20.0]")
 
-    if args.nrun < 0:
-        raise SystemExit("ERROR: --run must be >= 0")
+    if args.biasangle is not None:
+        biasangleval = float(args.biasangle)
+        if not (-180.0 <= biasangleval <= 180.0):
+            raise SystemExit("ERROR: --biasangle must be in [-180.0, 180.0]")
 
-    tag = f"{biasval:.2f}"
+        tag = f"{biasval:.2f}_{biasangleval:.0f}"
+    else:
+        tag = f"{biasval:.2f}"
+
     bdir = (Path(args.bdir) if args.bdir is not None else Path(f"run_{tag}")).resolve()
 
     if not bdir.is_dir():
         raise SystemExit(f"ERROR: directory does not exist: {bdir}")
+
+    if args.nrun < 0:
+        raise SystemExit("ERROR: --run must be >= 0")
 
     last = args.nrun - 1
     restart = bdir / f"biasprod_{last}.xml"
@@ -144,15 +160,27 @@ def main() -> None:
         gamma=float(args.gamma),
     )
 
-    biaslist = [
-        "Umbrella_x",
-        "Umbrella_y",
-        "Umbrella_z",
-        "Umbrella_angle_norm",
-        "Umbrella_dihedral",
-        "Umbrella_angle",
-        "Umbrella_COM",
-    ]
+    if args.biasangle is None:
+        biaslist = [
+            "Umbrella_x",
+            "Umbrella_y",
+            "Umbrella_z",
+            "Umbrella_angle_norm",
+            "Umbrella_dihedral",
+            "Umbrella_angle",
+            "Umbrella_COM",
+        ]
+    else:
+        biaslist = [
+            "Umbrella_x",
+            "Umbrella_y",
+            "Umbrella_z",
+            "Umbrella_angle_norm",
+            "Umbrella_dihedral",
+            "Umbrella_angle",
+            "Umbrella_COM",
+            "Umbrella_biasdih",
+        ]
 
     nrun = int(args.nrun)
     sim.simulate(

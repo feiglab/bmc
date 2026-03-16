@@ -76,6 +76,8 @@ def _build_anchor_selections(refsel: str, othersel: str, anchor: str) -> tuple[s
     asel1 = f"{tiles[i]}:{tiles[(i + 1) % tlen]}{suf}"
     asel2 = f"{tiles[(i + 2) % tlen]}:{tiles[(i + 3) % tlen]}{suf}"
     aselt = f"{tiles[i]}:{tiles[(i + 2) % tlen]}:{tiles[(i + 3) % tlen]}{suf}"
+    as11 = f"{tiles[i]}{suf}"
+    as12 = f"{tiles[(i + 1) % tlen]}{suf}"
 
     # other tile
     base, dot, suffix = othersel.partition(".")
@@ -100,7 +102,7 @@ def _build_anchor_selections(refsel: str, othersel: str, anchor: str) -> tuple[s
     else:
         raise SystemExit("ERROR: invalid length of other selection")
 
-    return asel1, asel2, aselt, bsel1, bsel2, bselt
+    return asel1, asel2, aselt, bsel1, bsel2, bselt, as11, as12
 
 
 def _parse_config_args(argv: Sequence[str] | None = None) -> Path:
@@ -172,10 +174,32 @@ def _apply_config_defaults(
         defaults["rot"] = cfg["rot"]
     if "bias" in cfg:
         defaults["bias"] = cfg["bias"]
+    if "biasangle" in cfg:
+        defaults["biasangle"] = cfg["biasangle"]
     if "flip" in cfg:
         defaults["flip"] = parse_bool(cfg["flip"])
     if "k" in cfg:
         defaults["k"] = cfg["k"]
+    if "kinit" in cfg:
+        defaults["kinit"] = cfg["kinit"]
+    if "kbias" in cfg:
+        defaults["kbias"] = cfg["kbias"]
+    if "kbiasangle" in cfg:
+        defaults["kbiasangle"] = cfg["kbiasangle"]
+    if "kdistx" in cfg:
+        defaults["kdistx"] = cfg["kdistx"]
+    if "kdisty" in cfg:
+        defaults["kdisty"] = cfg["kdisty"]
+    if "kdistz" in cfg:
+        defaults["kdistz"] = cfg["kdistz"]
+    if "kcent" in cfg:
+        defaults["kcent"] = cfg["kcent"]
+    if "knorm" in cfg:
+        defaults["knorm"] = cfg["knorm"]
+    if "kdihed" in cfg:
+        defaults["kdihed"] = cfg["kdihed"]
+    if "krot" in cfg:
+        defaults["krot"] = cfg["krot"]
     if "biasdir" in cfg:
         defaults["biasdir"] = cfg["biasdir"]
 
@@ -251,7 +275,7 @@ def _parse_args(
         "--bias",
         type=str,
         default="6.0:9.0:0.1",
-        help="Bias range as 'bmin:bmax:bdelta'",
+        help="Bias range as 'min:max:delta'",
     )
     p.add_argument(
         "--biasdir",
@@ -260,10 +284,76 @@ def _parse_args(
         help="Bias direction 'x', 'y', 'z'",
     )
     p.add_argument(
+        "--biasangle",
+        type=str,
+        default=None,
+        help="Bias angle range as 'min:max:delta'",
+    )
+    p.add_argument(
         "--k",
         type=str,
         default="500:200",
         help="Force constants as 'kinit:kbias[:kdist[:kcent[:kangle]]]'",
+    )
+    p.add_argument(
+        "--kinit",
+        type=float,
+        default=None,
+        help="Initial force constant",
+    )
+    p.add_argument(
+        "--kbias",
+        type=float,
+        default=None,
+        help="Force constant for distance bias",
+    )
+    p.add_argument(
+        "--kbiasangle",
+        type=float,
+        default=None,
+        help="Force constant for angle bias",
+    )
+    p.add_argument(
+        "--kdistx",
+        type=float,
+        default=None,
+        help="Force constant for distance x, if not bias",
+    )
+    p.add_argument(
+        "--kdisty",
+        type=float,
+        default=None,
+        help="Force constant for distance y, if not bias",
+    )
+    p.add_argument(
+        "--kdistz",
+        type=float,
+        default=None,
+        help="Force constant for distance z, if not bias",
+    )
+    p.add_argument(
+        "--kcent",
+        type=float,
+        default=None,
+        help="Force constant for central force",
+    )
+    p.add_argument(
+        "--knorm",
+        type=float,
+        default=None,
+        help="Force constant for angle norm restraint",
+    )
+    p.add_argument(
+        "--kdihed",
+        type=float,
+        default=None,
+        help="Force constant for dihedral twist restraint",
+    )
+    p.add_argument(
+        "--krot",
+        type=float,
+        default=None,
+        help="Force constant for rotation restraint",
     )
 
     flip_grp = p.add_mutually_exclusive_group()
@@ -324,7 +414,30 @@ def main() -> None:
         cfg["rot"] = format_value(args.rot)
         cfg["bias"] = format_value(args.bias)
         cfg["biasdir"] = format_value(args.biasdir)
+        if args.biasangle is not None:
+            cfg["biasangle"] = format_value(args.biasangle)
         cfg["k"] = format_value(args.k)
+        if args.kinit is not None:
+            cfg["kinit"] = format_value(args.kinit)
+        if args.kbias is not None:
+            cfg["kbias"] = format_value(args.kbias)
+        if args.kbiasangle is not None:
+            cfg["kbiasangle"] = format_value(args.kbiasangle)
+        if args.kdistx is not None:
+            cfg["kdistx"] = format_value(args.kdistx)
+        if args.kdisty is not None:
+            cfg["kdisty"] = format_value(args.kdisty)
+        if args.kdistz is not None:
+            cfg["kdistz"] = format_value(args.kdistz)
+        if args.kcent is not None:
+            cfg["kcent"] = format_value(args.kcent)
+        if args.knorm is not None:
+            cfg["knorm"] = format_value(args.knorm)
+        if args.kdihed is not None:
+            cfg["kdihed"] = format_value(args.kdihed)
+        if args.krot is not None:
+            cfg["krot"] = format_value(args.krot)
+
         cfg["flip"] = format_value(bool(args.flip))
         write_config(cfg_path, cfg)
 
@@ -344,11 +457,65 @@ def main() -> None:
         n_out=5,
     )
 
+    if args.kinit is not None:
+        kinit = float(args.kinit)
+
+    if args.kbias is not None:
+        kbias = float(args.kbias)
+
+    if args.kdistx is not None:
+        kdistx = float(args.kdistx)
+    else:
+        kdistx = kdist
+
+    if args.kdisty is not None:
+        kdisty = float(args.kdisty)
+    else:
+        kdisty = kdist
+
+    if args.kdistz is not None:
+        kdistz = float(args.kdistz)
+    else:
+        kdistz = kdist
+
+    if args.kcent is not None:
+        kcent = float(args.kcent)
+
+    if args.knorm is not None:
+        knorm = float(args.knorm)
+    else:
+        knorm = kangle
+
+    if args.kdihed is not None:
+        kdihed = float(args.kdihed)
+    else:
+        kdihed = kangle
+
+    if args.krot is not None:
+        krot = float(args.krot)
+    else:
+        krot = kangle
+
+    if args.biasangle is not None:
+        amin, amax, adel = _parse_floats(str(args.biasangle), [90.0, 180.0, 15.0], n_out=3)
+        bias_pairs = [
+            (biasval, biasangleval)
+            for biasval in np.arange(bmin, bmax + 1.0e-8, bdel)
+            for biasangleval in np.arange(amin, amax + 1.0e-8, adel)
+        ]
+        if args.kbiasangle is not None:
+            kbiasangle = float(args.kbiasangle)
+        else:
+            kbiasangle = kbias
+    else:
+        bias_pairs = [(biasval, None) for biasval in np.arange(bmin, bmax + 1.0e-8, bdel)]
+        kbiasangle = 0.0
+
     device = int(args.device)
     resources = str(args.resources)
 
     reftile = _split_tile_sel(refsel)
-    asel1, asel2, aselt, bsel1, bsel2, bselt = _build_anchor_selections(
+    asel1, asel2, aselt, bsel1, bsel2, bselt, as11, as12 = _build_anchor_selections(
         refsel=refsel,
         othersel=othersel,
         anchor=anchor,
@@ -368,11 +535,19 @@ def main() -> None:
     bca2 = StructureSelector(bsel2 + ".CA").atom_indices(s)
     bcat1 = StructureSelector(bselt + ".CA").atom_indices(s)
 
+    a1 = StructureSelector(as11 + ".CA").atom_indices(s)
+    a2 = StructureSelector(as12 + ".CA").atom_indices(s)
+
     restart = edir / "equi_final.xml"
     mode = str(args.mode).lower()
 
-    for biasval in np.arange(bmin, bmax + 1.0e-8, bdel):
-        tag = f"{biasval:.2f}"
+    keps = 1e-8
+
+    for biasval, biasangleval in bias_pairs:
+        if biasangleval is not None:
+            tag = f"{biasval:.2f}_{biasangleval:.0f}"
+        else:
+            tag = f"{biasval:.2f}"
 
         bdir = Path(f"run_{tag}")
         bdir.mkdir(parents=True, exist_ok=True)
@@ -386,28 +561,46 @@ def main() -> None:
 
         if biasdir == "x":
             sim.set_umbrella_xyz_distance(aca, bca, direction="x", target=biasval, k=kinit)
-            sim.set_umbrella_xyz_distance(aca, bca, direction="y", target=0.0, k=kinit)
-            sim.set_umbrella_xyz_distance(aca, bca, direction="z", target=0.0, k=kinit)
+            if kdisty > keps:
+                sim.set_umbrella_xyz_distance(aca, bca, direction="y", target=0.0, k=kinit)
+            if kdistz > keps:
+                sim.set_umbrella_xyz_distance(aca, bca, direction="z", target=0.0, k=kinit)
         elif biasdir == "y":
-            sim.set_umbrella_xyz_distance(aca, bca, direction="x", target=0.0, k=kinit)
+            if kdistx > keps:
+                sim.set_umbrella_xyz_distance(aca, bca, direction="x", target=0.0, k=kinit)
             sim.set_umbrella_xyz_distance(aca, bca, direction="y", target=biasval, k=kinit)
-            sim.set_umbrella_xyz_distance(aca, bca, direction="z", target=0.0, k=kinit)
+            if kdistz > keps:
+                sim.set_umbrella_xyz_distance(aca, bca, direction="z", target=0.0, k=kinit)
         elif biasdir == "z":
-            sim.set_umbrella_xyz_distance(aca, bca, direction="x", target=0.0, k=kinit)
-            sim.set_umbrella_xyz_distance(aca, bca, direction="y", target=0.0, k=kinit)
+            if kdistx > keps:
+                sim.set_umbrella_xyz_distance(aca, bca, direction="x", target=0.0, k=kinit)
+            if kdisty > keps:
+                sim.set_umbrella_xyz_distance(aca, bca, direction="y", target=0.0, k=kinit)
             sim.set_umbrella_xyz_distance(aca, bca, direction="z", target=biasval, k=kinit)
         else:
             raise SystemExit(f"ERROR: invalid biasdir {biasdir}")
 
-        sim.set_umbrella_center(rc, k=kinit, target=rcref)
+        if biasangleval is not None and kbiasangle > keps:
+            sim.set_umbrella_dihedral(
+                aca, a1, a2, bca, target=np.radians(biasangleval), k=kinit, tag="dihbias"
+            )
 
-        if bool(args.flip):
-            sim.set_umbrella_angle_norm(aca, aca1, aca2, bca, bca2, bca1, k=kinit)
-        else:
-            sim.set_umbrella_angle_norm(aca, aca1, aca2, bca, bca1, bca2, k=kinit)
-        sim.set_umbrella_dihedral(acat1, aca, bca, bcat1, k=kinit)
-        sim.set_umbrella_angle(aca, bca, bcat1, target=np.radians(refrot1), k=kinit)
-        sim.set_umbrella_angle(acat1, aca, bca, target=np.radians(refrot2), k=kinit)
+        if kcent > keps:
+            sim.set_umbrella_center(rc, k=kinit, target=rcref)
+
+        if knorm > keps:
+            if bool(args.flip):
+                sim.set_umbrella_angle_norm(aca, aca1, aca2, bca, bca2, bca1, k=kinit)
+            else:
+                sim.set_umbrella_angle_norm(aca, aca1, aca2, bca, bca1, bca2, k=kinit)
+
+        if kdihed > keps:
+            sim.set_umbrella_dihedral(acat1, aca, bca, bcat1, k=kinit)
+
+        if krot > keps:
+            sim.set_umbrella_angle(aca, bca, bcat1, target=np.radians(refrot1), k=kinit)
+            sim.set_umbrella_angle(acat1, aca, bca, target=np.radians(refrot2), k=kinit)
+
         sim.set_force_groups()
 
         sim.write_system(str(bdir / f"bias_system_{tag}.xml"))
@@ -431,23 +624,33 @@ def main() -> None:
 
         if biasdir == "x":
             sim.update_umbrella_xyz_distance("x", kbias)
-            sim.update_umbrella_xyz_distance("y", kdist)
-            sim.update_umbrella_xyz_distance("z", kdist)
+            sim.update_umbrella_xyz_distance("y", kdisty)
+            sim.update_umbrella_xyz_distance("z", kdistz)
         elif biasdir == "y":
-            sim.update_umbrella_xyz_distance("x", kdist)
+            sim.update_umbrella_xyz_distance("x", kdistx)
             sim.update_umbrella_xyz_distance("y", kbias)
-            sim.update_umbrella_xyz_distance("z", kdist)
+            sim.update_umbrella_xyz_distance("z", kdistz)
         elif biasdir == "z":
-            sim.update_umbrella_xyz_distance("x", kdist)
-            sim.update_umbrella_xyz_distance("y", kdist)
+            sim.update_umbrella_xyz_distance("x", kdistx)
+            sim.update_umbrella_xyz_distance("y", kdisty)
             sim.update_umbrella_xyz_distance("z", kbias)
         else:
             raise SystemExit(f"ERROR: invalid biasdir {biasdir}")
 
-        sim.update_umbrella_center(kcent)
-        sim.update_umbrella_angle_norm(kangle)
-        sim.update_umbrella_dihedral(kangle)
-        sim.update_umbrella_angle(kangle)
+        if biasangleval is not None and kbiasangle > keps:
+            sim.update_umbrella_dihedral(kbiasangle, tag="dihbias")
+
+        if kcent > keps:
+            sim.update_umbrella_center(kcent)
+
+        if knorm > keps:
+            sim.update_umbrella_angle_norm(knorm)
+
+        if kdihed > keps:
+            sim.update_umbrella_dihedral(kdihed)
+
+        if krot > keps:
+            sim.update_umbrella_angle(krot)
 
         sim.simulate(
             nstep=params.prodsteps,

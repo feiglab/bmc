@@ -131,6 +131,8 @@ def _apply_config_defaults(
         defaults["box"] = cfg["box"]
     if "biasdir" in cfg:
         defaults["biasdir"] = cfg["biasdir"]
+    if "biasangle" in cfg:
+        defaults["biasangle"] = cfg["biasangle"]
     if "conc" in cfg:
         defaults["conc"] = float(cfg["conc"])
     if "surf" in cfg:
@@ -209,6 +211,12 @@ def _parse_args(
         type=str,
         default="x",
         help="Bias direction 'x', 'y', 'z'",
+    )
+    p.add_argument(
+        "--biasangle",
+        type=str,
+        default=None,
+        help="Bias angle range, in degrees, 180 is flat",
     )
 
     p.add_argument(
@@ -291,7 +299,10 @@ def main() -> None:
     if args.box is None:
         if mode == "allatom":
             if biasdir == "x":
-                box_str = "22:11:9"
+                if args.biasangle is None:
+                    box_str = "22:11:9"
+                else:
+                    box_str = "22:11:20"
             elif biasdir == "y":
                 box_str = "11:22:9"
             elif biasdir == "z":
@@ -320,6 +331,8 @@ def main() -> None:
         cfg["othersel"] = format_value(args.othersel)
         cfg["box"] = format_value(box_str)
         cfg["biasdir"] = format_value(biasdir)
+        if args.biasangle is not None:
+            cfg["biasangle"] = format_value(args.biasangle)
         cfg["conc"] = format_value(args.conc)
         cfg["surf"] = format_value(args.surf)
         cfg["orient"] = format_value(bool(args.orient))

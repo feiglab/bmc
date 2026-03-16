@@ -82,6 +82,7 @@ _ORDER = [
     "flip",
     "bias",
     "biasdir",
+    "biasangle",
     "k",
     "setup",
     "equi",
