@@ -60,7 +60,32 @@ for rundir in run_*; do
   )
 done
 
-skip_files=(run_*/biasprod.skip.dcd)
+mapfile -t skip_files < <(
+  for f in run_*/biasprod.skip.dcd; do
+    [[ -e "$f" ]] || continue
+
+    dir="${f%/biasprod.skip.dcd}"
+    name="${dir#run_}"
+
+    if [[ "$name" =~ ^([0-9]+([.][0-9]+)?)(_[0-9]+([.][0-9]+)?)?$ ]]; then
+      first="${BASH_REMATCH[1]}"
+
+      if [[ -n "${BASH_REMATCH[3]:-}" ]]; then
+        has_second=1
+        second="${BASH_REMATCH[3]#_}"
+      else
+        has_second=0
+        second=0
+      fi
+
+      printf '%s\t%s\t%s\t%s\n' \
+        "$first" "$has_second" "$second" "$f"
+    else
+      die "Unexpected run directory name: $dir"
+    fi
+  done | sort -t $'\t' -k1,1g -k2,2n -k3,3g | cut -f4-
+)
+
 ((${#skip_files[@]})) || die "No run_*/biasprod.skip.dcd files found."
 
 check_same_size "biasprod.skip.dcd across run dirs" "${skip_files[@]}"

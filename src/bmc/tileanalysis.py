@@ -4,7 +4,7 @@
 # Michael Feig
 # mfeiglab@gmail.com
 #
-# 2025
+# 2025-2026
 #
 ########################################################################
 
@@ -1063,6 +1063,28 @@ def read_umbrella_geometry(fname, *, verbose=False):
     return df
 
 
+
+_RUN_RE = re.compile(r"^run_(\d+\.\d{1,2})(?:_(.+))?$")
+
+
+def find_run_dirs(dir: str) -> list[str]:
+    base = Path(dir)
+    path: list[str] = []
+
+    for p in base.iterdir():
+        if p.is_dir() and _RUN_RE.match(p.name):
+            path.append(p.name)
+
+    def sort_key(name: str) -> tuple[float, str]:
+        m = _RUN_RE.match(name)
+        assert m is not None
+        num = float(m.group(1))
+        suffix = m.group(2) or ""
+        return num, suffix
+
+    return sorted(path, key=sort_key)
+
+
 def process_umbrella(
     tag="hh",
     *,
@@ -1075,15 +1097,7 @@ def process_umbrella(
     trajname="CA.xtc",
 ):
     if path is None:
-        path = []
-        for r in range(10, 99):
-            fdir = f"run_{r/10:.1f}"
-            if Path(dir + "/" + fdir).exists():
-                path += [fdir]
-            else:
-                fdir = f"run_{r/10:.2f}"
-                if Path(dir + "/" + fdir).exists():
-                    path += [fdir]
+        path = find_run_dirs(dir)
 
     geo = read_umbrella_geometry(dir + "/" + path[0] + "/geometry.dat")
 
