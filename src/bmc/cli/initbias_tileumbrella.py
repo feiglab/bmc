@@ -305,7 +305,7 @@ def _parse_args(
     p.add_argument(
         "--bias",
         type=str,
-        default="6.0:9.0:0.1",
+        default=None,
         help="Bias range as 'min:max:delta'",
     )
     p.add_argument(
@@ -454,8 +454,9 @@ def main() -> None:
         cfg["othersel"] = format_value(args.othersel)
         cfg["anchor"] = format_value(args.anchor)
         cfg["rot"] = format_value(args.rot)
-        cfg["bias"] = format_value(args.bias)
         cfg["biasdir"] = format_value(args.biasdir)
+        if args.bias is not None:
+            cfg["bias"] = format_value(args.bias)
         if args.biasangle is not None:
             cfg["biasangle"] = format_value(args.biasangle)
         cfg["k"] = format_value(args.k)
@@ -494,7 +495,6 @@ def main() -> None:
     biasdir = str(args.biasdir)
 
     refrot1, refrot2 = _parse_floats(str(args.rot), [90.0, 90.0], n_out=2)
-    bmin, bmax, bdel = _parse_floats(str(args.bias), [6.0, 9.0, 0.1], n_out=3)
     kinit, kbias, kdist, kcent, kangle = _parse_floats(
         str(args.k),
         [500.0, 200.0],
@@ -546,24 +546,28 @@ def main() -> None:
             kbiasangle = float(args.kbiasangle)
         else:
             kbiasangle = kbias
-    elif args.biasangle is not None:
-        amin, amax, adel = _parse_floats(
-            str(args.biasangle),
-            [90.0, 180.0, 15.0],
-            n_out=3,
-        )
-        bias_pairs = [
-            (biasval, biasangleval)
-            for biasval in np.arange(bmin, bmax + 1.0e-8, bdel)
-            for biasangleval in np.arange(amin, amax + 1.0e-8, adel)
-        ]
-        if args.kbiasangle is not None:
-            kbiasangle = float(args.kbiasangle)
-        else:
-            kbiasangle = kbias
     else:
-        bias_pairs = [(biasval, None) for biasval in np.arange(bmin, bmax + 1.0e-8, bdel)]
-        kbiasangle = 0.0
+        if args.bias is None:
+            raise SystemExit("ERROR: no bias values given")
+        bmin, bmax, bdel = _parse_floats(str(args.bias), [6.0, 9.0, 0.1], n_out=3)
+        if args.biasangle is not None:
+            amin, amax, adel = _parse_floats(
+                str(args.biasangle),
+                [90.0, 180.0, 15.0],
+                n_out=3,
+            )
+            bias_pairs = [
+                (biasval, biasangleval)
+                for biasval in np.arange(bmin, bmax + 1.0e-8, bdel)
+                for biasangleval in np.arange(amin, amax + 1.0e-8, adel)
+            ]
+            if args.kbiasangle is not None:
+                kbiasangle = float(args.kbiasangle)
+            else:
+                kbiasangle = kbias
+        else:
+            bias_pairs = [(biasval, None) for biasval in np.arange(bmin, bmax + 1.0e-8, bdel)]
+            kbiasangle = 0.0
 
     device = int(args.device)
     resources = str(args.resources)
