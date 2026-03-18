@@ -6,12 +6,18 @@ from cocomo import ComponentType
 
 def main() -> None:
     types = ComponentType.read_list("component_types", dir=".")
-    types["hexamer"].writeout("sasa", "hexamer.surface")
-    types["hexamer"].writeout("enm", "hexamer.enmpairs")
-    types["pentamer"].writeout("sasa", "pentamer.surface")
-    types["pentamer"].writeout("enm", "pentamer.enmpairs")
-    types["trimer"].writeout("sasa", "trimer.surface")
-    types["trimer"].writeout("enm", "trimer.enmpairs")
+
+    outputs = {
+        "hexamer": ["sasa", "enm"],
+        "pentamer": ["sasa", "enm"],
+        "trimer": ["sasa", "enm"],
+    }
+    suffix = {"sasa": "surface", "enm": "enmpairs"}
+
+    for name, kinds in outputs.items():
+        component = types[name]
+        for kind in kinds:
+            component.writeout(kind, f"{name}.{suffix[kind]}")
 
 
 if __name__ == "__main__":

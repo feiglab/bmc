@@ -20,130 +20,15 @@ from cocomo import COCOMO
 from mdsim import MDSim, PDBReader, StructureSelector
 
 from .tile_config import format_value, parse_bool, read_config, write_config
-
-
-def _parse_bias_pair_item(item: str) -> tuple[float, float]:
-    val = item.strip()
-    if not val:
-        raise SystemExit("ERROR: empty biaspairs entry")
-
-    parts: list[str] | None = None
-    for sep in (":", "_"):
-        if sep in val:
-            parts = [p.strip() for p in val.split(sep)]
-            break
-
-    if parts is None or len(parts) != 2:
-        raise SystemExit(
-            "ERROR: each biaspairs entry must be " "'bias:biasangle' or 'bias_biasangle'"
-        )
-
-    try:
-        return float(parts[0]), float(parts[1])
-    except ValueError as e:
-        raise SystemExit(f"ERROR: invalid biaspairs entry {item!r}") from e
-
-
-def _parse_bias_pairs_arg(s: str) -> list[tuple[float, float]]:
-    pairs = [_parse_bias_pair_item(item) for item in s.split("=") if item.strip()]
-    if not pairs:
-        raise SystemExit("ERROR: biaspairs must define at least one pair")
-    return pairs
-
-
-def _parse_floats(s: str, defaults: Sequence[float], n_out: int) -> list[float]:
-    vals = [float(x) for x in s.split(":") if x.strip() != ""]
-    out: list[float] = []
-    last: float | None = None
-
-    for i in range(n_out):
-        if i < len(vals):
-            last = vals[i]
-            out.append(last)
-        elif i < len(defaults):
-            last = float(defaults[i])
-            out.append(last)
-        else:
-            out.append(last if last is not None else 0.0)
-
-    return out
-
-
-def _find(tdir: Path, filename: str) -> Path:
-    tdir = Path(tdir).expanduser().resolve()
-
-    for d in (tdir, *tdir.parents):
-        candidate = d / filename
-        if candidate.is_file():
-            return candidate.resolve()
-
-    candidate = Path.cwd() / filename
-    if candidate.is_file():
-        return candidate.resolve()
-
-    raise FileNotFoundError(f"Could not find '{filename}' in {tdir} or its parents or CWD")
-
-
-def _split_tile_sel(sel: str) -> list[str]:
-    base, dot, suffix = sel.partition(".")
-    tiles = base.split(":")
-    if dot:
-        return [f"{t}.{suffix}" for t in tiles]
-    return tiles
-
-
-def _build_anchor_selections(refsel: str, othersel: str, anchor: str) -> tuple[str, ...]:
-    a0, a1 = anchor.split(":")
-
-    # reference tile
-    base, dot, suffix = refsel.partition(".")
-    tiles = base.split(":")
-    suf = f".{suffix}" if dot else ""
-
-    tlen = len(tiles)
-    i = tiles.index(a0)
-    asel1 = f"{tiles[i]}:{tiles[(i + 1) % tlen]}{suf}"
-    asel2 = f"{tiles[(i + 2) % tlen]}:{tiles[(i + 3) % tlen]}{suf}"
-    aselt = f"{tiles[i]}:{tiles[(i + 2) % tlen]}:{tiles[(i + 3) % tlen]}{suf}"
-    as11 = f"{tiles[i]}{suf}"
-    as12 = f"{tiles[(i + 1) % tlen]}{suf}"
-
-    # other tile
-    base, dot, suffix = othersel.partition(".")
-    tiles = base.split(":")
-    suf = f".{suffix}" if dot else ""
-
-    tlen = len(tiles)
-    i = tiles.index(a1)
-
-    if tlen == 6:
-        bsel1 = f"{tiles[i]}:{tiles[(i + 1) % tlen]}{suf}"
-        bsel2 = f"{tiles[(i + 2) % tlen]}:{tiles[(i + 3) % tlen]}{suf}"
-        bselt = f"{tiles[i]}:{tiles[(i + 2) % tlen]}:{tiles[(i + 3) % tlen]}{suf}"
-    elif tlen == 5:
-        bsel1 = f"{tiles[i]}:{tiles[(i + 1) % tlen]}{suf}"
-        bsel2 = f"{tiles[(i + 3) % tlen]}:{tiles[(i + 4) % tlen]}{suf}"
-        bselt = f"{tiles[i]}:{tiles[(i + 1) % tlen]}:{tiles[(i + 4) % tlen]}{suf}"
-    elif tlen == 3:
-        bsel1 = f"{tiles[i]}{suf}"
-        bsel2 = f"{tiles[(i + 1) % tlen]}{suf}"
-        bselt = f"{tiles[i]}:{tiles[(i + 1) % tlen]}{suf}"
-    else:
-        raise SystemExit("ERROR: invalid length of other selection")
-
-    return asel1, asel2, aselt, bsel1, bsel2, bselt, as11, as12
-
-
-def _parse_config_args(argv: Sequence[str] | None = None) -> Path:
-    p = argparse.ArgumentParser(add_help=False)
-    p.add_argument(
-        "--config",
-        type=Path,
-        default=Path("config"),
-        help="Config file (key/value) to read/write",
-    )
-    ns, _ = p.parse_known_args(argv)
-    return Path(ns.config)
+from .tileumbrella_shared import (
+    build_anchor_selections,
+    build_bias_pairs,
+    find_input_file,
+    format_bias_tag,
+    parse_config_path,
+    parse_floats,
+    split_tile_selection,
+)
 
 
 @dataclass(frozen=True)
@@ -205,8 +90,6 @@ def _apply_config_defaults(
         defaults["bias"] = cfg["bias"]
     if "biasangle" in cfg:
         defaults["biasangle"] = cfg["biasangle"]
-    if "biaspairs" in cfg:
-        defaults["biaspairs"] = cfg["biaspairs"]
     if "flip" in cfg:
         defaults["flip"] = parse_bool(cfg["flip"])
     if "k" in cfg:
@@ -217,6 +100,8 @@ def _apply_config_defaults(
         defaults["kbias"] = cfg["kbias"]
     if "kbiasangle" in cfg:
         defaults["kbiasangle"] = cfg["kbiasangle"]
+    if "biaspairs" in cfg:
+        defaults["biaspairs"] = cfg["biaspairs"]
     if "kdistx" in cfg:
         defaults["kdistx"] = cfg["kdistx"]
     if "kdisty" in cfg:
@@ -305,7 +190,7 @@ def _parse_args(
     p.add_argument(
         "--bias",
         type=str,
-        default=None,
+        default="6.0:9.0:0.1",
         help="Bias range as 'min:max:delta'",
     )
     p.add_argument(
@@ -319,17 +204,6 @@ def _parse_args(
         type=str,
         default=None,
         help="Bias angle range as 'min:max:delta'",
-    )
-    p.add_argument(
-        "--biaspairs",
-        type=str,
-        default=None,
-        help=(
-            "Explicit bias/biasangle target pairs as "
-            "'bias:biasangle=bias:biasangle' or "
-            "'bias_biasangle=bias_biasangle'. Overrides "
-            "--bias/--biasangle grid generation."
-        ),
     )
     p.add_argument(
         "--k",
@@ -354,6 +228,18 @@ def _parse_args(
         type=float,
         default=None,
         help="Force constant for angle bias",
+    )
+    p.add_argument(
+        "--biaspairs",
+        type=str,
+        default=None,
+        help=(
+            "Explicit bias/biasangle pairs as "
+            "'bias:biasangle=bias:biasangle', "
+            "'bias_biasangle=bias_biasangle', or expanded "
+            "forms like '5.0:{90,120}={5.4,5.6}:{90,120}'. "
+            "Overrides --bias/--biasangle grid generation."
+        ),
     )
     p.add_argument(
         "--kdistx",
@@ -435,7 +321,7 @@ def _parse_args(
 
 
 def main() -> None:
-    cfg_path = _parse_config_args()
+    cfg_path = parse_config_path()
     cfg = read_config(cfg_path)
 
     args = _parse_args(cfg)
@@ -454,13 +340,10 @@ def main() -> None:
         cfg["othersel"] = format_value(args.othersel)
         cfg["anchor"] = format_value(args.anchor)
         cfg["rot"] = format_value(args.rot)
+        cfg["bias"] = format_value(args.bias)
         cfg["biasdir"] = format_value(args.biasdir)
-        if args.bias is not None:
-            cfg["bias"] = format_value(args.bias)
         if args.biasangle is not None:
             cfg["biasangle"] = format_value(args.biasangle)
-        if args.biaspairs is not None:
-            cfg["biaspairs"] = format_value(args.biaspairs)
         cfg["k"] = format_value(args.k)
         if args.kinit is not None:
             cfg["kinit"] = format_value(args.kinit)
@@ -468,6 +351,8 @@ def main() -> None:
             cfg["kbias"] = format_value(args.kbias)
         if args.kbiasangle is not None:
             cfg["kbiasangle"] = format_value(args.kbiasangle)
+        if args.biaspairs is not None:
+            cfg["biaspairs"] = format_value(args.biaspairs)
         if args.kdistx is not None:
             cfg["kdistx"] = format_value(args.kdistx)
         if args.kdisty is not None:
@@ -486,7 +371,7 @@ def main() -> None:
         cfg["flip"] = format_value(bool(args.flip))
         write_config(cfg_path, cfg)
 
-    pdb_path = _find(sdir, str(args.refpdb))
+    pdb_path = find_input_file(sdir, str(args.refpdb))
     s = PDBReader(str(pdb_path))
 
     refsel = str(args.refsel)
@@ -494,8 +379,8 @@ def main() -> None:
     anchor = str(args.anchor)
     biasdir = str(args.biasdir)
 
-    refrot1, refrot2 = _parse_floats(str(args.rot), [90.0, 90.0], n_out=2)
-    kinit, kbias, kdist, kcent, kangle = _parse_floats(
+    refrot1, refrot2 = parse_floats(str(args.rot), [90.0, 90.0], n_out=2)
+    kinit, kbias, kdist, kcent, kangle = parse_floats(
         str(args.k),
         [500.0, 200.0],
         n_out=5,
@@ -540,40 +425,25 @@ def main() -> None:
     else:
         krot = kangle
 
-    if args.biaspairs is not None:
-        bias_pairs = _parse_bias_pairs_arg(str(args.biaspairs))
+    bias_pairs = build_bias_pairs(
+        bias=str(args.bias),
+        biasangle=None if args.biasangle is None else str(args.biasangle),
+        biaspairs=None if args.biaspairs is None else str(args.biaspairs),
+    )
+
+    if any(biasangleval is not None for _, biasangleval in bias_pairs):
         if args.kbiasangle is not None:
             kbiasangle = float(args.kbiasangle)
         else:
             kbiasangle = kbias
     else:
-        if args.bias is None:
-            raise SystemExit("ERROR: no bias values given")
-        bmin, bmax, bdel = _parse_floats(str(args.bias), [6.0, 9.0, 0.1], n_out=3)
-        if args.biasangle is not None:
-            amin, amax, adel = _parse_floats(
-                str(args.biasangle),
-                [90.0, 180.0, 15.0],
-                n_out=3,
-            )
-            bias_pairs = [
-                (biasval, biasangleval)
-                for biasval in np.arange(bmin, bmax + 1.0e-8, bdel)
-                for biasangleval in np.arange(amin, amax + 1.0e-8, adel)
-            ]
-            if args.kbiasangle is not None:
-                kbiasangle = float(args.kbiasangle)
-            else:
-                kbiasangle = kbias
-        else:
-            bias_pairs = [(biasval, None) for biasval in np.arange(bmin, bmax + 1.0e-8, bdel)]
-            kbiasangle = 0.0
+        kbiasangle = 0.0
 
     device = int(args.device)
     resources = str(args.resources)
 
-    reftile = _split_tile_sel(refsel)
-    asel1, asel2, aselt, bsel1, bsel2, bselt, as11, as12 = _build_anchor_selections(
+    reftile = split_tile_selection(refsel)
+    asel1, asel2, aselt, bsel1, bsel2, bselt, as11, as12 = build_anchor_selections(
         refsel=refsel,
         othersel=othersel,
         anchor=anchor,
@@ -602,10 +472,7 @@ def main() -> None:
     keps = 1e-8
 
     for biasval, biasangleval in bias_pairs:
-        if biasangleval is not None:
-            tag = f"{biasval:.2f}_{biasangleval:.0f}"
-        else:
-            tag = f"{biasval:.2f}"
+        tag = format_bias_tag(biasval, biasangleval)
 
         bdir = Path(f"run_{tag}")
         bdir.mkdir(parents=True, exist_ok=True)

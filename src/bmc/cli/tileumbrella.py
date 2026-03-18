@@ -8,6 +8,8 @@ from pathlib import Path
 from cocomo import COCOMO
 from mdsim import MDSim
 
+from .tileumbrella_shared import format_bias_tag, parse_bias_target
+
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
@@ -42,7 +44,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         dest="biasstr",
         type=str,
         default="6.00",
-        help="One or two bias values (nm or nm:degree))",
+        help="Single bias or bias:biasangle target",
     )
 
     p.add_argument(
@@ -110,35 +112,15 @@ def main() -> None:
 
     mode = str(args.mode).lower()
 
-    biasstr = args.biasstr.strip()
-
-    parts = None
-    for sep in (":", "_"):
-        if sep in biasstr:
-            parts = [p.strip() for p in biasstr.split(sep)]
-            break
-
-    if parts is None:
-        biasval = float(biasstr)
-        biasangleval = None
-    elif len(parts) == 2:
-        biasval = float(parts[0])
-        biasangleval = float(parts[1])
-    else:
-        raise SystemExit(
-            "ERROR: --biasstr must be 'bias' or 'bias:biasangle' " "or 'bias_biasangle'"
-        )
+    biasval, biasangleval = parse_bias_target(str(args.biasstr))
 
     if not (1.0 <= biasval <= 20.0):
         raise SystemExit("ERROR: bias must be in [1.0, 20.0]")
 
-    if biasangleval is not None:
-        if not (-180.0 <= biasangleval <= 180.0):
-            raise SystemExit("ERROR: biasangle must be in [-180.0, 180.0]")
+    if biasangleval is not None and not (-180.0 <= biasangleval <= 180.0):
+        raise SystemExit("ERROR: biasangle must be in [-180.0, 180.0]")
 
-        tag = f"{biasval:.2f}_{biasangleval:.0f}"
-    else:
-        tag = f"{biasval:.2f}"
+    tag = format_bias_tag(biasval, biasangleval)
 
     bdir = (Path(args.bdir) if args.bdir is not None else Path(f"run_{tag}")).resolve()
 

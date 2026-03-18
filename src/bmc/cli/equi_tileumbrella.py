@@ -9,18 +9,7 @@ from cocomo import COCOMO
 from mdsim import MDSim, PDBReader
 
 from .tile_config import format_value, read_config, write_config
-
-
-def _parse_config_args(argv: Sequence[str] | None = None) -> Path:
-    p = argparse.ArgumentParser(add_help=False)
-    p.add_argument(
-        "--config",
-        type=Path,
-        default=Path("config"),
-        help="Config file (key/value) to read/write",
-    )
-    ns, _ = p.parse_known_args(argv)
-    return Path(ns.config)
+from .tileumbrella_shared import parse_config_path
 
 
 def _apply_config_defaults(
@@ -127,7 +116,7 @@ def _parse_args(
 
 
 def main() -> None:
-    cfg_path = _parse_config_args()
+    cfg_path = parse_config_path()
     cfg = read_config(cfg_path)
 
     args = _parse_args(cfg)
@@ -139,7 +128,10 @@ def main() -> None:
     device = int(args.device)
 
     if args.refpdb is None:
-        refpdb = Path("dimer.solvated.pdb") if mode == "allatom" else Path("dimer.protein.pdb")
+        if mode == "allatom":
+            refpdb = Path("dimer.solvated.pdb")
+        else:
+            refpdb = Path("dimer.protein.pdb")
     else:
         refpdb = Path(args.refpdb)
 

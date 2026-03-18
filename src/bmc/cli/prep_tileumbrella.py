@@ -28,6 +28,11 @@ from mdsim import (
 from openmm.unit import nanometer
 
 from .tile_config import format_value, parse_bool, read_config, split_values, write_config
+from .tileumbrella_shared import (
+    find_input_file,
+    parse_config_path,
+    split_tile_selection,
+)
 
 
 def _as_float(name: str, s: str) -> float:
@@ -35,37 +40,6 @@ def _as_float(name: str, s: str) -> float:
         return float(s)
     except Exception as e:
         raise SystemExit(f"ERROR: {name} must be a float, got {s!r}") from e
-
-
-def _find(tdir: Path, filename: str) -> Path:
-    tdir = Path(tdir).expanduser().resolve()
-
-    # try relative to tdir then parents
-    for d in (tdir, *tdir.parents):
-        candidate = d / filename
-        if candidate.is_file():
-            return candidate.resolve()
-
-    # try CWD
-    candidate = Path.cwd() / filename
-    if candidate.is_file():
-        return candidate.resolve()
-
-    raise FileNotFoundError(
-        f"Could not find '{filename}' in {tdir} or its parent directories or CWD"
-    )
-
-
-def _parse_config_args(argv: Sequence[str] | None = None) -> Path:
-    p = argparse.ArgumentParser(add_help=False)
-    p.add_argument(
-        "--config",
-        type=Path,
-        default=Path("config"),
-        help="Config file (key/value) to read/write",
-    )
-    ns, _ = p.parse_known_args(argv)
-    return Path(ns.config)
 
 
 @dataclass(frozen=True)
@@ -272,16 +246,8 @@ def _parse_args(
     return p.parse_args(argv)
 
 
-def _split_reftile(refsel: str) -> list[str]:
-    base, dot, suffix = refsel.partition(".")
-    tiles = base.split(":")
-    if dot:
-        return [f"{t}.{suffix}" for t in tiles]
-    return tiles
-
-
 def main() -> None:
-    cfg_path = _parse_config_args()
+    cfg_path = parse_config_path()
     cfg = read_config(cfg_path)
 
     args = _parse_args(cfg)
@@ -340,12 +306,12 @@ def main() -> None:
             cfg["ff"] = format_value(ff_val)
         write_config(cfg_path, cfg)
 
-    pdb_path = _find(tdir, pdb_arg)
+    pdb_path = find_input_file(tdir, pdb_arg)
     s = PDBReader(str(pdb_path))
 
     refsel = str(args.refsel)
     othersel = str(args.othersel)
-    reftile = _split_reftile(refsel)
+    reftile = split_tile_selection(refsel)
 
     ch = s.center(StructureSelector(refsel).atom_indices(s))[0]
 
@@ -420,9 +386,9 @@ def main() -> None:
         )
     elif mode == "cocomo":
         surf = float(args.surf)
-        components = _find(tdir, "dimer.components")
-        component_types = _find(tdir, "component_types_files")
-        interactions = _find(tdir, "interactions")
+        components = find_input_file(tdir, "dimer.components")
+        component_types = find_input_file(tdir, "component_types_files")
+        interactions = find_input_file(tdir, "interactions")
         asm = Assembly(
             components,
             component_types,
