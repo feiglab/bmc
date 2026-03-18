@@ -83,6 +83,7 @@ _ORDER = [
     "bias",
     "biasdir",
     "biasangle",
+    "biaspairs",
     "k",
     "setup",
     "equi",

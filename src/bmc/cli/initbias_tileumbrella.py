@@ -22,6 +22,35 @@ from mdsim import MDSim, PDBReader, StructureSelector
 from .tile_config import format_value, parse_bool, read_config, write_config
 
 
+def _parse_bias_pair_item(item: str) -> tuple[float, float]:
+    val = item.strip()
+    if not val:
+        raise SystemExit("ERROR: empty biaspairs entry")
+
+    parts: list[str] | None = None
+    for sep in (":", "_"):
+        if sep in val:
+            parts = [p.strip() for p in val.split(sep)]
+            break
+
+    if parts is None or len(parts) != 2:
+        raise SystemExit(
+            "ERROR: each biaspairs entry must be " "'bias:biasangle' or 'bias_biasangle'"
+        )
+
+    try:
+        return float(parts[0]), float(parts[1])
+    except ValueError as e:
+        raise SystemExit(f"ERROR: invalid biaspairs entry {item!r}") from e
+
+
+def _parse_bias_pairs_arg(s: str) -> list[tuple[float, float]]:
+    pairs = [_parse_bias_pair_item(item) for item in s.split("=") if item.strip()]
+    if not pairs:
+        raise SystemExit("ERROR: biaspairs must define at least one pair")
+    return pairs
+
+
 def _parse_floats(s: str, defaults: Sequence[float], n_out: int) -> list[float]:
     vals = [float(x) for x in s.split(":") if x.strip() != ""]
     out: list[float] = []
@@ -186,6 +215,8 @@ def _apply_config_defaults(
         defaults["kbias"] = cfg["kbias"]
     if "kbiasangle" in cfg:
         defaults["kbiasangle"] = cfg["kbiasangle"]
+    if "biaspairs" in cfg:
+        defaults["biaspairs"] = cfg["biaspairs"]
     if "kdistx" in cfg:
         defaults["kdistx"] = cfg["kdistx"]
     if "kdisty" in cfg:
@@ -314,6 +345,17 @@ def _parse_args(
         help="Force constant for angle bias",
     )
     p.add_argument(
+        "--biaspairs",
+        type=str,
+        default=None,
+        help=(
+            "Explicit bias/biasangle target pairs as "
+            "'bias:biasangle=bias:biasangle' or "
+            "'bias_biasangle=bias_biasangle'. Overrides "
+            "--bias/--biasangle grid generation."
+        ),
+    )
+    p.add_argument(
         "--kdistx",
         type=float,
         default=None,
@@ -423,6 +465,8 @@ def main() -> None:
             cfg["kbias"] = format_value(args.kbias)
         if args.kbiasangle is not None:
             cfg["kbiasangle"] = format_value(args.kbiasangle)
+        if args.biaspairs is not None:
+            cfg["biaspairs"] = format_value(args.biaspairs)
         if args.kdistx is not None:
             cfg["kdistx"] = format_value(args.kdistx)
         if args.kdisty is not None:
@@ -496,8 +540,18 @@ def main() -> None:
     else:
         krot = kangle
 
-    if args.biasangle is not None:
-        amin, amax, adel = _parse_floats(str(args.biasangle), [90.0, 180.0, 15.0], n_out=3)
+    if args.biaspairs is not None:
+        bias_pairs = _parse_bias_pairs_arg(str(args.biaspairs))
+        if args.kbiasangle is not None:
+            kbiasangle = float(args.kbiasangle)
+        else:
+            kbiasangle = kbias
+    elif args.biasangle is not None:
+        amin, amax, adel = _parse_floats(
+            str(args.biasangle),
+            [90.0, 180.0, 15.0],
+            n_out=3,
+        )
         bias_pairs = [
             (biasval, biasangleval)
             for biasval in np.arange(bmin, bmax + 1.0e-8, bdel)

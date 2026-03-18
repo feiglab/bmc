@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import gzip
 import logging
 import re
 import sys
@@ -952,48 +953,134 @@ def process_meta(tag="hh", *, dir=".", path=None, verbose=False):
 # umbrella sampling
 
 
+def _open_text_auto(fname):
+    path = Path(fname)
+    if path.suffix == ".gz":
+        return gzip.open(path, "rt", encoding="utf-8")
+    return open(path, encoding="utf-8")
+
+
+def _choose_optional_gz(fname):
+    fname = Path(fname)
+    if fname.exists():
+        return fname
+
+    gz_name = Path(str(fname) + ".gz")
+    if gz_name.exists():
+        return gz_name
+    return None
+
+
+def _parse_simple_header(fname, known_cols):
+    with _open_text_auto(fname) as fh:
+        for line in fh:
+            s = line.strip()
+            if not s:
+                continue
+
+            tokens = [tok.lstrip("#!").strip().lower() for tok in s.split()]
+            tokens = [tok for tok in tokens if tok]
+            if tokens and tokens[0] == "fields":
+                tokens = tokens[1:]
+
+            if tokens and all(tok in known_cols for tok in tokens):
+                return tokens
+            return None
+    return None
+
+
+def _count_data_columns(fname, *, skiprows=1):
+    with _open_text_auto(fname) as fh:
+        for i, line in enumerate(fh):
+            if i < skiprows:
+                continue
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            return len(s.split())
+    return None
+
+
+def _read_umbrella_table(
+    fname,
+    *,
+    required_cols,
+    optional_cols=(),
+    verbose=False,
+):
+    chosen = _choose_optional_gz(fname)
+    if chosen is None:
+        if verbose:
+            gz_name = Path(str(Path(fname)) + ".gz")
+            print(f"WARNING: no {fname} or {gz_name} found")
+        return None
+
+    if verbose:
+        print(f"reading umbrella data from {chosen}")
+
+    known_cols = set(required_cols) | set(optional_cols)
+    cols = _parse_simple_header(chosen, known_cols)
+    if cols is None:
+        ncols = _count_data_columns(chosen, skiprows=1)
+        if ncols is None:
+            return pd.DataFrame(columns=list(required_cols) + list(optional_cols))
+        if ncols == len(required_cols):
+            cols = list(required_cols)
+        elif ncols == len(required_cols) + len(optional_cols):
+            cols = list(required_cols) + list(optional_cols)
+        else:
+            raise ValueError(
+                f"Could not determine columns for {chosen}: found {ncols} data columns"
+            )
+
+    dtype = {}
+    for col in cols:
+        dtype[col] = int if col.endswith("step") else float
+
+    return pd.read_csv(
+        chosen,
+        sep=r"\s+",
+        engine="python",
+        names=cols,
+        usecols=range(len(cols)),
+        comment="#",
+        skiprows=1,
+        dtype=dtype,
+        na_values=["nan", "NaN", "INF", "inf", "-inf"],
+        on_bad_lines="skip",
+    )
+
+
 def read_umbrella_bias(dir, umbrellas, *, verbose=False):
-    cols = ["step", "xbias", "ybias", "zbias", "anglebias", "torsionbias", "rotbias"]
-    dtype = {
-        "step": int,
-        "xbias": float,
-        "ybias": float,
-        "zbias": float,
-        "anglebias": float,
-        "torsionbias": float,
-        "rotbias": float,
-    }
+    required_cols = [
+        "step",
+        "xbias",
+        "ybias",
+        "zbias",
+        "anglebias",
+        "torsionbias",
+        "rotbias",
+    ]
+    optional_cols = ["dihbias"]
 
     frames = []
     dir = Path(dir)
 
     for u in umbrellas:
-        base = dir / u / "bias.dat"
-        candidates = [base, Path(str(base) + ".gz")]
+        fname = dir / u / "bias.dat"
+        df = _read_umbrella_table(
+            fname,
+            required_cols=required_cols,
+            optional_cols=optional_cols,
+            verbose=False,
+        )
 
-        fname = None
-        for p in candidates:
-            if p.exists():
-                fname = p
-                break
-
-        if fname is None:
+        if df is None:
             if verbose:
                 print(f"WARNING: no bias.dat or bias.dat.gz for umbrella {u}")
             continue
 
-        df = pd.read_csv(
-            fname,
-            sep=r"\s+",
-            engine="python",
-            names=cols,
-            usecols=range(len(cols)),
-            comment="#",
-            skiprows=1,
-            dtype=dtype,
-            na_values=["nan", "NaN", "INF", "inf", "-inf"],
-            on_bad_lines="skip",
-        )
+        dihbias = df["dihbias"] if "dihbias" in df.columns else 0.0
         df["ubias"] = (
             df["xbias"]
             + df["ybias"]
@@ -1001,6 +1088,7 @@ def read_umbrella_bias(dir, umbrellas, *, verbose=False):
             + df["anglebias"]
             + df["torsionbias"]
             + df["rotbias"]
+            + dihbias
         )
         df["obias"] = df["anglebias"] + df["torsionbias"] + df["rotbias"]
         df.insert(0, "umbrella", u)
@@ -1020,69 +1108,87 @@ def read_umbrella_bias(dir, umbrellas, *, verbose=False):
 
 
 def read_umbrella_geometry(fname, *, verbose=False):
-    cols = ["gstep", "gxdist", "gydist", "gzdist", "gangle", "gtorsion", "grot1", "grot2"]
-    dtype = {
-        "gstep": int,
-        "gxdist": float,
-        "gydist": float,
-        "gzdist": float,
-        "gangle": float,
-        "gtorsion": float,
-        "grot1": float,
-        "grot2": float,
-    }
+    required_cols = [
+        "gstep",
+        "gxdist",
+        "gydist",
+        "gzdist",
+        "gangle",
+        "gtorsion",
+        "grot1",
+        "grot2",
+    ]
+    optional_cols = ["gdihbias"]
 
-    fname = Path(fname)
-    # Try the given name first, then "<fname>.gz"
-    if fname.exists():
-        chosen = fname
-    else:
-        gz_name = Path(str(fname) + ".gz")
-        if gz_name.exists():
-            chosen = gz_name
-        else:
-            if verbose:
-                print(f"WARNING: no {fname} or {gz_name} found")
-            return None
-
-    if verbose:
-        print(f"reading geometry from {chosen}")
-
-    df = pd.read_csv(
-        chosen,
-        sep=r"\s+",
-        engine="python",
-        names=cols,
-        usecols=range(len(cols)),
-        comment="#",
-        skiprows=1,
-        dtype=dtype,
-        na_values=["nan", "NaN", "INF", "inf", "-inf"],
-        on_bad_lines="skip",
+    df = _read_umbrella_table(
+        fname,
+        required_cols=required_cols,
+        optional_cols=optional_cols,
+        verbose=verbose,
     )
     return df
 
 
-
-_RUN_RE = re.compile(r"^run_(\d+\.\d{1,2})(?:_(.+))?$")
+_RUN_RE = re.compile(r"^run_" r"(\d+(?:\.\d+)?)" r"(?:_(\d+(?:\.\d+)?))?$")
 
 
 def find_run_dirs(dir: str) -> list[str]:
     base = Path(dir)
-    path: list[str] = []
+    paths: list[str] = []
 
     for p in base.iterdir():
         if p.is_dir() and _RUN_RE.match(p.name):
-            path.append(p.name)
+            paths.append(p.name)
 
-    def sort_key(name: str) -> tuple[float, str]:
+    def sort_key(name: str) -> tuple[float, int, float]:
         m = _RUN_RE.match(name)
         assert m is not None
-        num = float(m.group(1))
-        suffix = m.group(2) or ""
-        return num, suffix
+        first = float(m.group(1))
+        second_s = m.group(2)
 
-    return sorted(path, key=sort_key)
+        if second_s is None:
+            return first, 0, 0.0
+        return first, 1, float(second_s)
+
+    return sorted(paths, key=sort_key)
+
+
+def _normalize_bias_tags(
+    biasval: str | list[str] | tuple[str, ...],
+) -> tuple[str, ...]:
+    if isinstance(biasval, str):
+        tags = [biasval]
+    else:
+        tags = list(biasval)
+
+    if not tags:
+        raise ValueError("biasval must contain at least one tag")
+
+    out: list[str] = []
+    for tag in tags:
+        if tag not in out:
+            out.append(tag)
+    return tuple(out)
+
+
+def _combined_bias_tag(tags: tuple[str, ...]) -> str:
+    if len(tags) == 1:
+        return tags[0]
+    return "_".join(tags)
+
+
+def _sum_bias_columns(df: pd.DataFrame, tags: tuple[str, ...]) -> pd.Series:
+    missing = [tag for tag in tags if tag not in df.columns]
+    if missing:
+        raise KeyError(f"Missing bias columns: {missing}")
+    return df.loc[:, list(tags)].sum(axis=1)
+
+
+def _ensure_combined_bias_column(df: pd.DataFrame, tags: tuple[str, ...]) -> str:
+    bias_key = _combined_bias_tag(tags)
+    if len(tags) > 1 or bias_key not in df.columns:
+        df[bias_key] = _sum_bias_columns(df, tags)
+    return bias_key
 
 
 def process_umbrella(
@@ -1096,10 +1202,14 @@ def process_umbrella(
     skip=0,
     trajname="CA.xtc",
 ):
+
+    bias_tags = _normalize_bias_tags(biasval)
+    bias_key = _combined_bias_tag(bias_tags)
+
     if path is None:
         path = find_run_dirs(dir)
 
-    geo = read_umbrella_geometry(dir + "/" + path[0] + "/geometry.dat")
+    geo = read_umbrella_geometry(dir + "/" + path[0] + "/geometry.dat", verbose=verbose)
 
     if tag == "hh":
         dimer = hh_analysis(dir, trajname=trajname)
@@ -1118,11 +1228,15 @@ def process_umbrella(
     data = {path[i]: df.iloc[i * nper : (i + 1) * nper].reset_index(drop=True) for i in range(nwin)}
 
     bias = read_umbrella_bias(dir, path, verbose=verbose)
+    for p in path:
+        _ensure_combined_bias_column(bias[p], bias_tags)
+
     for i in range(nwin):
         bindiv = bias[path[i]].iloc[i * nper : (i + 1) * nper].reset_index(drop=True)
         data[path[i]] = pd.merge(
             data[path[i]], bindiv, left_index=True, right_index=True, how="inner"
         )
+        _ensure_combined_bias_column(data[path[i]], bias_tags)
 
     mask = {}
     for p in path:
@@ -1136,14 +1250,15 @@ def process_umbrella(
         data[p].reset_index(drop=True, inplace=True)
 
     for p in path:
-        wham = unbias_wham(np.array([data[p][biasval]]).T)
+        wham = unbias_wham(np.asarray(data[p][[bias_key]], dtype=float))
         data[p]["ww"] = pd.DataFrame(np.exp(wham["logW"]) / np.sum(np.exp(wham["logW"])))
 
     combmask = pd.concat([mask[p] for p in path], ignore_index=True)
-    data["comb"] = df.loc[combmask].copy()
+    combmask_arr = combmask.to_numpy(dtype=bool)
+    data["comb"] = pd.concat([data[p] for p in path], ignore_index=True)
 
     bias_matrix = np.column_stack(
-        [np.asarray(bias[p][biasval].loc[combmask], dtype=float) for p in path]
+        [np.asarray(bias[p][bias_key].iloc[combmask_arr], dtype=float) for p in path]
     )
     counts = [len(data[p]) for p in path]
 
