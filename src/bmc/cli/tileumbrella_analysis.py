@@ -23,6 +23,7 @@ from .tileumbrella_shared import (
     build_bias_pairs,
     find_input_file,
     format_bias_tag,
+    normalize_bias_pairs_arg,
     parse_config_path,
     parse_floats,
 )
@@ -268,7 +269,7 @@ def main() -> None:
         if args.kbiasangle is not None:
             cfg["kbiasangle"] = format_value(args.kbiasangle)
         if args.biaspairs is not None:
-            cfg["biaspairs"] = format_value(args.biaspairs)
+            cfg["biaspairs"] = format_value(normalize_bias_pairs_arg(str(args.biaspairs)))
         if args.kdistx is not None:
             cfg["kdistx"] = format_value(args.kdistx)
         if args.kdisty is not None:

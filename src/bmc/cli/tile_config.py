@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import re
 import shlex
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+
+_CONFIG_LINE_RE = re.compile(r"^(?P<key>[^\s=]+)(?:(?:\s*=\s*)|\s+)(?P<val>.*)$")
 
 
 def read_config(path: Path) -> dict[str, str]:
@@ -14,6 +17,7 @@ def read_config(path: Path) -> dict[str, str]:
     Format:
         key value
         key = value
+        key=value
 
     Blank lines and lines starting with '#' are ignored. Keys are lowercased.
     """
@@ -28,14 +32,13 @@ def read_config(path: Path) -> dict[str, str]:
         if not line or line.startswith("#"):
             continue
 
-        if "=" in line:
-            key, _, val = line.partition("=")
-            key = key.strip()
-            val = val.strip()
+        match = _CONFIG_LINE_RE.match(line)
+        if match is None:
+            key = line
+            val = ""
         else:
-            parts = line.split(None, 1)
-            key = parts[0].strip()
-            val = parts[1].strip() if len(parts) == 2 else ""
+            key = match.group("key").strip()
+            val = match.group("val").strip()
 
         if key:
             cfg[key.lower()] = val

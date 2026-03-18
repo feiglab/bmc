@@ -163,11 +163,7 @@ def parse_bias_target(spec: str) -> tuple[float, float | None]:
 def parse_bias_pairs_arg(spec: str) -> list[tuple[float, float]]:
     pairs: list[tuple[float, float]] = []
 
-    for raw_item in _split_top_level(spec, "="):
-        item = raw_item.strip()
-        if not item:
-            continue
-
+    for item in _iter_bias_pair_items(spec):
         bias_spec, angle_spec = _split_bias_item(item)
         bias_values = _parse_value_spec(bias_spec, name="bias")
         angle_values = _parse_value_spec(angle_spec, name="biasangle")
@@ -180,6 +176,10 @@ def parse_bias_pairs_arg(spec: str) -> list[tuple[float, float]]:
         raise SystemExit("ERROR: biaspairs must define at least one pair")
 
     return pairs
+
+
+def normalize_bias_pairs_arg(spec: str) -> str:
+    return "=".join(_iter_bias_pair_items(spec))
 
 
 def build_bias_pairs(
@@ -217,6 +217,33 @@ def float_range(start: float, stop: float, step: float) -> list[float]:
         index += 1
 
     return values
+
+
+def _iter_bias_pair_items(spec: str) -> list[str]:
+    items: list[str] = []
+
+    for raw_item in _split_top_level(spec, "="):
+        item = raw_item.strip()
+        if not item:
+            continue
+
+        try:
+            _split_bias_item(item)
+        except SystemExit:
+            subitems = _split_top_level_whitespace(item)
+            if len(subitems) <= 1:
+                raise
+
+            for subitem in subitems:
+                cleaned = subitem.strip()
+                if not cleaned:
+                    continue
+                _split_bias_item(cleaned)
+                items.append(cleaned)
+        else:
+            items.append(item)
+
+    return items
 
 
 def _count_pair_separators(spec: str) -> int:
@@ -312,4 +339,35 @@ def _split_top_level(spec: str, sep: str) -> list[str]:
         raise SystemExit(f"ERROR: unbalanced braces in {spec!r}")
 
     parts.append(spec[start:])
+    return parts
+
+
+def _split_top_level_whitespace(spec: str) -> list[str]:
+    parts: list[str] = []
+    token: list[str] = []
+    depth = 0
+
+    for char in spec:
+        if char == "{":
+            depth += 1
+            token.append(char)
+            continue
+        if char == "}":
+            depth -= 1
+            if depth < 0:
+                raise SystemExit(f"ERROR: unbalanced braces in {spec!r}")
+            token.append(char)
+            continue
+        if depth == 0 and char.isspace():
+            if token:
+                parts.append("".join(token))
+                token = []
+            continue
+        token.append(char)
+
+    if depth != 0:
+        raise SystemExit(f"ERROR: unbalanced braces in {spec!r}")
+
+    if token:
+        parts.append("".join(token))
     return parts
