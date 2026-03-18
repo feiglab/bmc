@@ -217,8 +217,6 @@ def _apply_config_defaults(
         defaults["kbias"] = cfg["kbias"]
     if "kbiasangle" in cfg:
         defaults["kbiasangle"] = cfg["kbiasangle"]
-    if "biaspairs" in cfg:
-        defaults["biaspairs"] = cfg["biaspairs"]
     if "kdistx" in cfg:
         defaults["kdistx"] = cfg["kdistx"]
     if "kdisty" in cfg:
@@ -323,6 +321,17 @@ def _parse_args(
         help="Bias angle range as 'min:max:delta'",
     )
     p.add_argument(
+        "--biaspairs",
+        type=str,
+        default=None,
+        help=(
+            "Explicit bias/biasangle target pairs as "
+            "'bias:biasangle=bias:biasangle' or "
+            "'bias_biasangle=bias_biasangle'. Overrides "
+            "--bias/--biasangle grid generation."
+        ),
+    )
+    p.add_argument(
         "--k",
         type=str,
         default="500:200",
@@ -345,17 +354,6 @@ def _parse_args(
         type=float,
         default=None,
         help="Force constant for angle bias",
-    )
-    p.add_argument(
-        "--biaspairs",
-        type=str,
-        default=None,
-        help=(
-            "Explicit bias/biasangle target pairs as "
-            "'bias:biasangle=bias:biasangle' or "
-            "'bias_biasangle=bias_biasangle'. Overrides "
-            "--bias/--biasangle grid generation."
-        ),
     )
     p.add_argument(
         "--kdistx",
@@ -461,6 +459,8 @@ def main() -> None:
             cfg["bias"] = format_value(args.bias)
         if args.biasangle is not None:
             cfg["biasangle"] = format_value(args.biasangle)
+        if args.biaspairs is not None:
+            cfg["biaspairs"] = format_value(args.biaspairs)
         cfg["k"] = format_value(args.k)
         if args.kinit is not None:
             cfg["kinit"] = format_value(args.kinit)
@@ -468,8 +468,6 @@ def main() -> None:
             cfg["kbias"] = format_value(args.kbias)
         if args.kbiasangle is not None:
             cfg["kbiasangle"] = format_value(args.kbiasangle)
-        if args.biaspairs is not None:
-            cfg["biaspairs"] = format_value(args.biaspairs)
         if args.kdistx is not None:
             cfg["kdistx"] = format_value(args.kdistx)
         if args.kdisty is not None:
