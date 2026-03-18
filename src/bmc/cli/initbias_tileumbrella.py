@@ -205,6 +205,8 @@ def _apply_config_defaults(
         defaults["bias"] = cfg["bias"]
     if "biasangle" in cfg:
         defaults["biasangle"] = cfg["biasangle"]
+    if "biaspairs" in cfg:
+        defaults["biaspairs"] = cfg["biaspairs"]
     if "flip" in cfg:
         defaults["flip"] = parse_bool(cfg["flip"])
     if "k" in cfg:
