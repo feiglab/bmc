@@ -353,7 +353,7 @@ def main() -> None:
                 normmode = "both"
             else:
                 normtarget = np.radians(normcap)
-                normmode = "below"
+                normmode = "above"
 
             if bool(args.flip):
                 sim.set_umbrella_angle_norm(
@@ -400,7 +400,7 @@ def main() -> None:
             )
 
         if distcap is not None and kdist > keps:
-            sim.set_umbrella_distance(aca1, bcac, target=distcap, side="below", k=kinit)
+            sim.set_umbrella_distance(aca1, bcac, target=distcap, side="above", k=kinit)
 
         sim.set_force_groups()
 
