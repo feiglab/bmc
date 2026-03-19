@@ -50,6 +50,21 @@ _PERSISTENT_DESTS = (
 )
 
 
+_K_INDIVIDUAL_DESTS = (
+    "kinit",
+    "kbias",
+    "kbiasangle",
+    "kdistx",
+    "kdisty",
+    "kdistz",
+    "kdist",
+    "kcent",
+    "knorm",
+    "kdihed",
+    "krot",
+)
+
+
 _CONFIG_KEY_BY_DEST = {
     "pdb": "pdb_in",
 }
@@ -96,6 +111,28 @@ def _normalize_config_value(dest: str, value: object) -> object:
         return str(value).lower()
     if dest == "biaspairs":
         return normalize_bias_pairs_arg(str(value))
+    return value
+
+
+def _resolve_config_value(
+    dest: str,
+    args: argparse.Namespace,
+    value: object,
+) -> object:
+    if value is not None:
+        return value
+
+    if dest == "bias":
+        if getattr(args, "biaspairs", None) is None:
+            return "6.0:9.0:0.1"
+        return None
+
+    if dest == "k":
+        has_individual = any(getattr(args, name, None) is not None for name in _K_INDIVIDUAL_DESTS)
+        if not has_individual:
+            return "500:200"
+        return None
+
     return value
 
 
@@ -236,7 +273,7 @@ def _add_all_arguments(
     p.add_argument(
         "--bias",
         type=str,
-        default="6.0:9.0:0.1",
+        default=None,
         help=_help_text(
             visible,
             "bias",
@@ -262,7 +299,7 @@ def _add_all_arguments(
     p.add_argument(
         "--k",
         type=str,
-        default="500:200",
+        default=None,
         help=_help_text(
             visible,
             "k",
@@ -580,7 +617,8 @@ def write_args_config(
         else:
             value = getattr(args, dest)
 
-        out[key] = format_value(_normalize_config_value(dest, value))
+        resolved = _resolve_config_value(dest, args, value)
+        out[key] = format_value(_normalize_config_value(dest, resolved))
 
     for key, value in override_map.items():
         out[key] = format_value(value)
@@ -772,14 +810,15 @@ def normalize_bias_pairs_arg(spec: str) -> str:
 
 
 def build_bias_pairs(
-    bias: str,
+    bias: Optional[str],
     biasangle: Optional[str] = None,
     biaspairs: Optional[str] = None,
 ) -> list[tuple[float, Optional[float]]]:
     if biaspairs is not None:
         return [(biasval, angleval) for biasval, angleval in parse_bias_pairs_arg(biaspairs)]
 
-    bmin, bmax, bdel = parse_floats(bias, [6.0, 9.0, 0.1], n_out=3)
+    bias_spec = "6.0:9.0:0.1" if bias is None else bias
+    bmin, bmax, bdel = parse_floats(bias_spec, [6.0, 9.0, 0.1], n_out=3)
     bias_values = float_range(bmin, bmax, bdel)
 
     if biasangle is None:

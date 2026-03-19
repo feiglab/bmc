@@ -135,8 +135,9 @@ def main() -> None:
     biasdir = str(args.biasdir)
 
     refrot1, refrot2 = parse_floats(str(args.rot), [90.0, 90.0], n_out=2)
+    k_spec = "500.0:200.0" if args.k is None else str(args.k)
     kinit, kbias, kdist, kcent, kangle = parse_floats(
-        str(args.k),
+        k_spec,
         [500.0, 200.0],
         n_out=5,
     )
