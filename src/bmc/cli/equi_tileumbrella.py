@@ -1,125 +1,31 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import argparse
-from collections.abc import Sequence
 from pathlib import Path
 
 from cocomo import COCOMO
 from mdsim import MDSim, PDBReader
 
-from .tile_config import format_value, read_config, write_config
-from .tileumbrella_shared import parse_config_path
+from .tile_config import read_config
+from .tileumbrella_shared import parse_args, parse_config_path, write_args_config
 
-
-def _apply_config_defaults(
-    p: argparse.ArgumentParser,
-    cfg: dict[str, str],
-) -> None:
-    defaults: dict[str, object] = {}
-
-    if "mode" in cfg:
-        defaults["mode"] = cfg["mode"]
-    if "setup" in cfg:
-        defaults["setup"] = Path(cfg["setup"])
-    if "equi" in cfg:
-        defaults["equi"] = Path(cfg["equi"])
-    if "refpdb" in cfg:
-        defaults["refpdb"] = Path(cfg["refpdb"])
-
-    if defaults:
-        p.set_defaults(**defaults)
-
-
-def _parse_args(
-    cfg: dict[str, str],
-    argv: Sequence[str] | None = None,
-) -> argparse.Namespace:
-    p = argparse.ArgumentParser(
-        prog="equi_tileumbrella.py",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-
-    # Mode: allow --mode plus shortcut flags --allatom/--cocomo.
-    mode_grp = p.add_mutually_exclusive_group()
-    mode_grp.add_argument(
-        "--mode",
-        choices=["allatom", "cocomo"],
-        default="allatom",
-        help="Simulation mode",
-    )
-    mode_grp.add_argument(
-        "--allatom",
-        dest="mode",
-        action="store_const",
-        const="allatom",
-        help="Shortcut for --mode allatom",
-    )
-    mode_grp.add_argument(
-        "--cocomo",
-        dest="mode",
-        action="store_const",
-        const="cocomo",
-        help="Shortcut for --mode cocomo",
-    )
-
-    p.add_argument(
-        "--setup",
-        type=Path,
-        default=Path("setup"),
-        help="Setup directory",
-    )
-    p.add_argument(
-        "--equi",
-        type=Path,
-        default=Path("equi"),
-        help="Equilibration output directory",
-    )
-    p.add_argument(
-        "--refpdb",
-        type=Path,
-        default=None,
-        help=(
-            "Reference PDB (used for restraints). Defaults depend on mode: "
-            "allatom->dimer.solvated.pdb, cocomo->dimer.protein.pdb"
-        ),
-    )
-    p.add_argument(
-        "--device",
-        type=int,
-        default=0,
-        help="Device index (OpenMM platform device id)",
-    )
-    p.add_argument(
-        "--resources",
-        type=str,
-        default="CUDA",
-        help="OpenMM platform/resources string",
-    )
-
-    p.add_argument(
-        "--config",
-        type=Path,
-        default=Path("config"),
-        help="Config file (key/value) to read/write",
-    )
-    p.add_argument(
-        "--no-write-config",
-        dest="write_config",
-        action="store_false",
-        help="Disable writing updated config values",
-    )
-    p.set_defaults(write_config=True)
-
-    _apply_config_defaults(p, cfg)
-    return p.parse_args(argv)
+_HELP_OPTIONS = (
+    "mode",
+    "setup",
+    "equi",
+    "refpdb",
+    "device",
+    "resources",
+    "config",
+    "write_config",
+)
 
 
 def main() -> None:
     cfg_path = parse_config_path()
     cfg = read_config(cfg_path)
 
-    args = _parse_args(cfg)
+    args = parse_args(cfg, _HELP_OPTIONS, prog="equi_tileumbrella.py")
 
     mode = str(args.mode).lower()
     sdir = Path(args.setup).expanduser().resolve()
@@ -137,11 +43,15 @@ def main() -> None:
 
     cfg_path = Path(args.config)
     if bool(args.write_config):
-        cfg["mode"] = format_value(mode)
-        cfg["setup"] = format_value(args.setup)
-        cfg["equi"] = format_value(args.equi)
-        cfg["refpdb"] = format_value(refpdb)
-        write_config(cfg_path, cfg)
+        write_args_config(
+            cfg_path,
+            cfg,
+            args,
+            overrides={
+                "mode": mode,
+                "refpdb": refpdb,
+            },
+        )
 
     edir.mkdir(parents=True, exist_ok=True)
 
@@ -170,7 +80,12 @@ def main() -> None:
         )
 
         sim.set_position_restraint(selection="protein and (name CA or name CB)")
-        sim.setup_simulation(resources=resources, device=device, temperature=5, tstep=0.001)
+        sim.setup_simulation(
+            resources=resources,
+            device=device,
+            temperature=5,
+            tstep=0.001,
+        )
 
         minsteps = 1000
         sim.minimize(nstep=minsteps)

@@ -78,6 +78,12 @@ def format_value(v: Any) -> str:
 
 _ORDER = [
     "mode",
+    "setup",
+    "equi",
+    "pdb_in",
+    "refpdb",
+    "capdb",
+    "cadcd",
     "refsel",
     "othersel",
     "anchor",
@@ -87,18 +93,25 @@ _ORDER = [
     "biasdir",
     "biasangle",
     "biaspairs",
+    "normcap",
     "k",
-    "setup",
-    "equi",
-    "pdb_in",
-    "refpdb",
-    "capdb",
-    "cadcd",
+    "kinit",
+    "kbias",
+    "kbiasangle",
+    "kdistx",
+    "kdisty",
+    "kdistz",
+    "kcent",
+    "knorm",
+    "kdihed",
+    "krot",
     "box",
     "conc",
     "surf",
     "orient",
     "ff",
+    "device",
+    "resources",
 ]
 
 
@@ -109,20 +122,20 @@ def write_config(path: Path, data: Mapping[str, str]) -> None:
     ordered: list[str] = []
     seen = set()
 
-    for k in _ORDER:
-        if k in data:
-            ordered.append(k)
-            seen.add(k)
+    for key in _ORDER:
+        if key in data:
+            ordered.append(key)
+            seen.add(key)
 
-    for k in sorted(keys):
-        if k not in seen:
-            ordered.append(k)
+    for key in sorted(keys):
+        if key not in seen:
+            ordered.append(key)
 
     lines = []
-    for k in ordered:
-        v = data.get(k, "")
-        if v == "":
+    for key in ordered:
+        value = data.get(key, "")
+        if value == "":
             continue
-        lines.append(f"{k} {v}")
+        lines.append(f"{key} {value}")
 
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")

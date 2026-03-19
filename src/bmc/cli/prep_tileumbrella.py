@@ -10,10 +10,10 @@
 
 from __future__ import annotations
 
-import argparse
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 from cocomo import COCOMO, Assembly
@@ -27,19 +27,21 @@ from mdsim import (
 )
 from openmm.unit import nanometer
 
-from .tile_config import format_value, parse_bool, read_config, split_values, write_config
+from .tile_config import read_config
 from .tileumbrella_shared import (
     find_input_file,
+    parse_args,
     parse_config_path,
     split_tile_selection,
+    write_args_config,
 )
 
 
 def _as_float(name: str, s: str) -> float:
     try:
         return float(s)
-    except Exception as e:
-        raise SystemExit(f"ERROR: {name} must be a float, got {s!r}") from e
+    except Exception as exc:
+        raise SystemExit(f"ERROR: {name} must be a float, got {s!r}") from exc
 
 
 @dataclass(frozen=True)
@@ -49,7 +51,29 @@ class BoxNM:
     z: float
 
     def as_units(self) -> tuple:
-        return (self.x * nanometer, self.y * nanometer, self.z * nanometer)
+        return (
+            self.x * nanometer,
+            self.y * nanometer,
+            self.z * nanometer,
+        )
+
+
+_HELP_OPTIONS = (
+    "mode",
+    "setup",
+    "pdb",
+    "refsel",
+    "othersel",
+    "box",
+    "biasdir",
+    "biasangle",
+    "conc",
+    "surf",
+    "orient",
+    "ff",
+    "config",
+    "write_config",
+)
 
 
 def _parse_box_nm(s: str) -> BoxNM:
@@ -66,7 +90,7 @@ def _parse_box_nm(s: str) -> BoxNM:
         y = _as_float("boxy", parts[1])
         z = _as_float("boxz", parts[2])
         return BoxNM(x, y, z)
-    raise SystemExit("ERROR: --box must be 'x', 'x:y', or 'x:y:z' in nm (e.g. 22:11:9)")
+    raise SystemExit("ERROR: --box must be 'x', 'x:y', or 'x:y:z' in nm " "(e.g. 22:11:9)")
 
 
 def _expand_forcefields(paths: Sequence[str]) -> list[str]:
@@ -75,7 +99,12 @@ def _expand_forcefields(paths: Sequence[str]) -> list[str]:
 
 def _default_forcefields() -> list[str]:
     ffdir = Path.home() / "ff" / "openmm"
-    return _expand_forcefields([str(ffdir / "c36m.xml"), str(ffdir / "waters_ions_default.xml")])
+    return _expand_forcefields(
+        [
+            str(ffdir / "c36m.xml"),
+            str(ffdir / "waters_ions_default.xml"),
+        ]
+    )
 
 
 def _validate_forcefields(ff: Sequence[str]) -> None:
@@ -85,172 +114,11 @@ def _validate_forcefields(ff: Sequence[str]) -> None:
         raise SystemExit(msg)
 
 
-def _apply_config_defaults(
-    p: argparse.ArgumentParser,
-    cfg: dict[str, str],
-) -> None:
-    defaults: dict[str, object] = {}
-
-    if "mode" in cfg:
-        defaults["mode"] = cfg["mode"]
-    if "setup" in cfg:
-        defaults["setup"] = Path(cfg["setup"])
-    if "pdb_in" in cfg:
-        defaults["pdb"] = cfg["pdb_in"]
-    if "refsel" in cfg:
-        defaults["refsel"] = cfg["refsel"]
-    if "othersel" in cfg:
-        defaults["othersel"] = cfg["othersel"]
-    if "box" in cfg:
-        defaults["box"] = cfg["box"]
-    if "biasdir" in cfg:
-        defaults["biasdir"] = cfg["biasdir"]
-    if "biasangle" in cfg:
-        defaults["biasangle"] = cfg["biasangle"]
-    if "conc" in cfg:
-        defaults["conc"] = float(cfg["conc"])
-    if "surf" in cfg:
-        defaults["surf"] = float(cfg["surf"])
-    if "orient" in cfg:
-        defaults["orient"] = parse_bool(cfg["orient"])
-    if "ff" in cfg:
-        defaults["ff"] = split_values(cfg["ff"])
-
-    if defaults:
-        p.set_defaults(**defaults)
-
-
-def _parse_args(
-    cfg: dict[str, str],
-    argv: Sequence[str] | None = None,
-) -> argparse.Namespace:
-    p = argparse.ArgumentParser(
-        prog="prep_tileumbrella.py",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    p.add_argument(
-        "--mode",
-        choices=["allatom", "cocomo"],
-        default="allatom",
-        help="Simulation mode",
-    )
-    mode_grp = p.add_mutually_exclusive_group()
-    mode_grp.add_argument(
-        "--allatom",
-        dest="mode",
-        action="store_const",
-        const="allatom",
-        help="Shortcut for --mode allatom",
-    )
-    mode_grp.add_argument(
-        "--cocomo",
-        dest="mode",
-        action="store_const",
-        const="cocomo",
-        help="Shortcut for --mode cocomo",
-    )
-
-    p.add_argument(
-        "--setup",
-        type=Path,
-        default=Path("setup"),
-        help="Output/setup directory",
-    )
-    p.add_argument(
-        "--pdb",
-        type=str,
-        default=None,
-        help="Input PDB file (searched relative to --setup and parents, then CWD)",
-    )
-    p.add_argument(
-        "--refsel",
-        type=str,
-        default="A:B:C:D:E:F.2-91",
-        help="Reference selection (mdsim StructureSelector syntax)",
-    )
-    p.add_argument(
-        "--othersel",
-        type=str,
-        default="G:H:I:J:K:L.2-91",
-        help="Other selection (mdsim StructureSelector syntax)",
-    )
-    p.add_argument(
-        "--box",
-        type=str,
-        default=None,
-        help="Box size in nm: x, x:y, or x:y:z (e.g. 22:11:9).",
-    )
-    p.add_argument(
-        "--biasdir",
-        type=str,
-        default="x",
-        help="Bias direction 'x', 'y', 'z'",
-    )
-    p.add_argument(
-        "--biasangle",
-        type=str,
-        default=None,
-        help="Bias angle range, in degrees, 180 is flat",
-    )
-
-    p.add_argument(
-        "--conc",
-        type=float,
-        default=100.0,
-        help="NaCl concentration in mM (allatom only)",
-    )
-    p.add_argument(
-        "--surf",
-        type=float,
-        default=0.7,
-        help="surface scaling parameter (COCOMO only)",
-    )
-
-    orient_grp = p.add_mutually_exclusive_group()
-    orient_grp.add_argument(
-        "--orient",
-        dest="orient",
-        action="store_true",
-        help="Orient using refsel plane and rotate othersel into x-axis",
-    )
-    orient_grp.add_argument(
-        "--no-orient",
-        dest="orient",
-        action="store_false",
-        help="Disable orientation step",
-    )
-    p.set_defaults(orient=True)
-
-    p.add_argument(
-        "--ff",
-        nargs="+",
-        default=None,
-        help="OpenMM forcefield XMLs (allatom only).",
-    )
-
-    p.add_argument(
-        "--config",
-        type=Path,
-        default=Path("config"),
-        help="Config file (key/value) to read/write",
-    )
-    p.add_argument(
-        "--no-write-config",
-        dest="write_config",
-        action="store_false",
-        help="Disable writing updated config values",
-    )
-    p.set_defaults(write_config=True)
-
-    _apply_config_defaults(p, cfg)
-    return p.parse_args(argv)
-
-
 def main() -> None:
     cfg_path = parse_config_path()
     cfg = read_config(cfg_path)
 
-    args = _parse_args(cfg)
+    args = parse_args(cfg, _HELP_OPTIONS, prog="prep_tileumbrella.py")
 
     mode = str(args.mode).lower()
     tdir = Path(args.setup).expanduser().resolve()
@@ -283,28 +151,24 @@ def main() -> None:
     box_nm = _parse_box_nm(box_str)
     boxx, boxy, boxz = box_nm.as_units()
 
-    ff_val: list[str] | None = None
+    ff_val: Optional[list[str]] = None
     if mode == "allatom":
-        ff_val = _default_forcefields() if args.ff is None else _expand_forcefields(args.ff)
+        if args.ff is None:
+            ff_val = _default_forcefields()
+        else:
+            ff_val = _expand_forcefields(list(args.ff))
         _validate_forcefields(ff_val)
 
     cfg_path = Path(args.config)
     if bool(args.write_config):
-        cfg["mode"] = format_value(mode)
-        cfg["setup"] = format_value(args.setup)
-        cfg["pdb_in"] = format_value(pdb_arg)
-        cfg["refsel"] = format_value(args.refsel)
-        cfg["othersel"] = format_value(args.othersel)
-        cfg["box"] = format_value(box_str)
-        cfg["biasdir"] = format_value(biasdir)
-        if args.biasangle is not None:
-            cfg["biasangle"] = format_value(args.biasangle)
-        cfg["conc"] = format_value(args.conc)
-        cfg["surf"] = format_value(args.surf)
-        cfg["orient"] = format_value(bool(args.orient))
+        overrides: dict[str, object] = {
+            "mode": mode,
+            "pdb_in": pdb_arg,
+            "box": box_str,
+        }
         if ff_val is not None:
-            cfg["ff"] = format_value(ff_val)
-        write_config(cfg_path, cfg)
+            overrides["ff"] = ff_val
+        write_args_config(cfg_path, cfg, args, overrides=overrides)
 
     pdb_path = find_input_file(tdir, pdb_arg)
     s = PDBReader(str(pdb_path))
@@ -321,24 +185,24 @@ def main() -> None:
             raise SystemExit(f"invalid biasdir {biasdir!r}; must be 'x', 'y', or 'z'")
 
         pts = [s.center(StructureSelector(h).atom_indices(s))[0] for h in reftile]
-        n = plane_normal(pts)
-        phiy = float(np.arctan2(-n[0], n[2]))
+        nrm = plane_normal(pts)
+        phiy = float(np.arctan2(-nrm[0], nrm[2]))
         s.rotate_about_y(phiy, anchor=ch)
 
         pts = [s.center(StructureSelector(h).atom_indices(s))[0] for h in reftile]
-        n = plane_normal(pts)
-        phix = float(np.arctan2(n[1], np.hypot(n[0], n[2])))
+        nrm = plane_normal(pts)
+        phix = float(np.arctan2(nrm[1], np.hypot(nrm[0], nrm[2])))
         s.rotate_about_x(phix, anchor=ch)
 
         phiz = 0.0
         if biasdir in {"x", "y"}:
             co = s.center(StructureSelector(othersel).atom_indices(s))[0]
-            v = (co - ch).value_in_unit(nanometer)
+            vec = (co - ch).value_in_unit(nanometer)
             if biasdir == "x":
-                phiz = float(np.arctan2(v[1], v[0]))
+                phiz = float(np.arctan2(vec[1], vec[0]))
                 s.rotate_about_z(-phiz, anchor=ch)
             else:
-                phiz = float(np.arctan2(v[0], v[1]))
+                phiz = float(np.arctan2(vec[0], vec[1]))
                 s.rotate_about_z(+phiz, anchor=ch)
 
         rx = np.degrees(phix)
@@ -360,7 +224,7 @@ def main() -> None:
     s.translate(translate)
 
     t_nm = [float(x.value_in_unit(nanometer)) for x in translate]
-    print(f"translated center by ({t_nm[0]:.3f}, {t_nm[1]:.3f}, {t_nm[2]:.3f}) nm")
+    print(f"translated center by ({t_nm[0]:.3f}, {t_nm[1]:.3f}, " f"{t_nm[2]:.3f}) nm")
 
     s.write_pdb(str(tdir / "dimer.protein.pdb"))
 
