@@ -1368,20 +1368,301 @@ def unbias_mbar(bias, *, kT=kb * T, counts=None, verbose=False):
     return {"mbar": mbar, "logW": logw, "ww": ww}
 
 
-def pmf1d_mbar(mbar, data, tag, *, kT=kb * T, nbins=100, rang=None, verbose=False):
-    """1D PMF via PyMBAR FES (histogram) with safe handling of empty bins.
+def _is_energy_vector(obj) -> bool:
+    if isinstance(obj, pd.Series):
+        return True
+    if isinstance(obj, np.ndarray):
+        return obj.ndim <= 1
+    if isinstance(obj, (list, tuple)):
+        if len(obj) == 0:
+            return True
+        return np.isscalar(obj[0])
+    return False
 
-    Notes
-    -----
-    PyMBAR's FES.get_fes() raises KeyError when queried at histogram bins with
-    zero occupancy. We therefore query only occupied bins and fill the rest
-    with NaN.
-    """
+
+def _validate_energy_offset(energy_offset, nframes: int, *, name="energy_offset") -> np.ndarray:
+    arr = np.asarray(energy_offset, float).ravel()
+    if arr.size != nframes:
+        raise ValueError(f"{name} length mismatch: got {arr.size}, expected {nframes}")
+    if not np.all(np.isfinite(arr)):
+        raise ValueError(f"{name} must contain only finite values")
+    return arr
+
+
+def _get_frame_energy(
+    data: pd.DataFrame,
+    *,
+    energy_offset=None,
+    energy_col=None,
+) -> np.ndarray | None:
+    if energy_offset is not None and energy_col is not None:
+        raise ValueError("Provide either energy_offset or energy_col, not both")
+    if energy_col is not None:
+        if energy_col not in data.columns:
+            raise KeyError(f"Missing energy column: {energy_col}")
+        energy_offset = data[energy_col]
+    if energy_offset is None:
+        return None
+    return _validate_energy_offset(energy_offset, len(data))
+
+
+def _apply_energy_offset_to_weights(
+    w: np.ndarray,
+    energy_offset=None,
+    *,
+    kT: float = kb * T,
+) -> np.ndarray:
+    w = np.asarray(w, float).ravel()
+    if energy_offset is None:
+        return w
+
+    de = _validate_energy_offset(energy_offset, w.size)
+    shift = float(np.min(de))
+    with np.errstate(over="ignore", under="ignore", invalid="ignore"):
+        fac = np.exp(-(de - shift) / float(kT))
+    return w * fac
+
+
+def _split_combined_energy(df, energy_offset) -> dict[str, np.ndarray]:
+    arr = _validate_energy_offset(energy_offset, len(df["comb"]))
+    out: dict[str, np.ndarray] = {}
+    start = 0
+    for p in df["sets"]:
+        nrow = len(df[p])
+        out[p] = arr[start : start + nrow]
+        start += nrow
+
+    if start != arr.size:
+        raise ValueError("combined energy_offset split mismatch")
+    return out
+
+
+def _normalize_set_energy_offsets(
+    df, energy_offset, *, setlist=None
+) -> dict[str, np.ndarray | None]:
+    if setlist is None:
+        setlist = df["sets"]
+
+    if energy_offset is None:
+        return {p: None for p in setlist}
+
+    if isinstance(energy_offset, dict):
+        if "comb" in energy_offset and len(energy_offset) == 1:
+            by_set = _split_combined_energy(df, energy_offset["comb"])
+            return {p: by_set[p] for p in setlist}
+
+        missing = [p for p in setlist if p not in energy_offset]
+        if missing:
+            raise KeyError(f"Missing energy_offset for sets: {missing}")
+
+        return {
+            p: _validate_energy_offset(
+                energy_offset[p],
+                len(df[p]),
+                name=f"energy_offset[{p}]",
+            )
+            for p in setlist
+        }
+
+    if _is_energy_vector(energy_offset):
+        by_set = _split_combined_energy(df, energy_offset)
+        return {p: by_set[p] for p in setlist}
+
+    if not isinstance(energy_offset, (list, tuple)):
+        raise TypeError("energy_offset must be an array or a per-set container")
+
+    if len(energy_offset) != len(setlist):
+        raise ValueError("energy_offset length must match number of plotted sets")
+
+    return {
+        p: _validate_energy_offset(eo, len(df[p]), name=f"energy_offset[{p}]")
+        for p, eo in zip(setlist, energy_offset)
+    }
+
+
+def _normalize_energy_structure(obj, energy_offset):
+    if _is_tiledata_dict(obj):
+        return energy_offset
+
+    if isinstance(obj, (list, tuple)):
+        items = list(obj)
+    else:
+        raise TypeError("energy_offset shape does not match input data")
+
+    if energy_offset is None:
+        return [_normalize_energy_structure(it, None) for it in items]
+
+    if len(items) == 1 and _is_tiledata_dict(items[0]) and _is_energy_vector(energy_offset):
+        return [_normalize_energy_structure(items[0], energy_offset)]
+
+    if not isinstance(energy_offset, (list, tuple)):
+        raise ValueError("energy_offset must mirror the input data structure")
+
+    if len(energy_offset) != len(items):
+        raise ValueError("energy_offset length must match the input data structure")
+
+    return [_normalize_energy_structure(it, eo) for it, eo in zip(items, energy_offset)]
+
+
+def _pmf2d_from_frame_data(
+    data: pd.DataFrame,
+    xtag,
+    ytag,
+    *,
+    nbins=(100, 100),
+    kT=kb * T,
+    rang=None,
+    energy_offset=None,
+    energy_col=None,
+):
+    energy = _get_frame_energy(
+        data,
+        energy_offset=energy_offset,
+        energy_col=energy_col,
+    )
+
+    if isinstance(xtag, list) and isinstance(ytag, list):
+        sxtag = xtag[0].rstrip("0123456789")
+        sytag = ytag[0].rstrip("0123456789")
+
+        dplotlist = []
+        eplotlist = []
+        for xkey, ykey in zip(xtag, ytag):
+            dp = data[[xkey, ykey, "ww"]].fillna(0).copy()
+            dp.columns = [sxtag, sytag, "ww"]
+            dplotlist.append(dp)
+            if energy is not None:
+                eplotlist.append(energy)
+
+        dplot = pd.concat(dplotlist, ignore_index=True)
+        denergy = None if energy is None else np.concatenate(eplotlist)
+
+        res = pmf2d_from_weights(
+            dplot,
+            [sxtag, sytag],
+            nbins=nbins,
+            kT=kT,
+            rang=rang,
+            energy_offset=denergy,
+        )
+        return res, sxtag, sytag
+
+    sxtag = str(xtag).rstrip("0123456789")
+    sytag = str(ytag).rstrip("0123456789")
+
+    dplot = data[[xtag, ytag, "ww"]].fillna(0).copy()
+    res = pmf2d_from_weights(
+        dplot,
+        [xtag, ytag],
+        nbins=nbins,
+        kT=kT,
+        rang=rang,
+        energy_offset=energy,
+    )
+    return res, sxtag, sytag
+
+
+def _pmf1d_from_tiledata(
+    data,
+    tag="dist",
+    *,
+    usembar=False,
+    kT=kb * T,
+    nbins=50,
+    rang=None,
+    energy_offset=None,
+    energy_col=None,
+):
+    if isinstance(tag, list):
+        taglist = list(tag)
+        stag = taglist[0].rstrip("0123456789")
+    else:
+        taglist = None
+        stag = str(tag).rstrip("0123456789")
+
+    energy = _get_frame_energy(
+        data["comb"],
+        energy_offset=energy_offset,
+        energy_col=energy_col,
+    )
+
+    if taglist is not None:
+        dplotlist = []
+        eplotlist = []
+        for t in taglist:
+            dp = data["comb"][[t, "ww"]].fillna(0).copy()
+            dp.columns = [stag, "ww"]
+            dplotlist.append(dp)
+            if energy is not None:
+                eplotlist.append(energy)
+
+        dplot = pd.concat(dplotlist, ignore_index=True)
+        denergy = None if energy is None else np.concatenate(eplotlist)
+        return pmf1d_from_weights(
+            dplot,
+            stag,
+            nbins=nbins,
+            kT=kT,
+            rang=rang,
+            energy_offset=denergy,
+        )
+
+    if usembar:
+        res = pmf1d_mbar(
+            data["mbar"],
+            data["comb"],
+            tag,
+            nbins=nbins,
+            kT=kT,
+            rang=rang,
+            energy_offset=energy,
+        )
+        if stag != tag:
+            res["pmf"] = res["pmf"].rename(columns={tag: stag})
+            if res["dpmf"] is not None:
+                res["dpmf"] = res["dpmf"].rename(columns={tag: stag})
+            res["ranges"] = res["ranges"].rename(columns={tag: stag})
+        return res
+
+    dplot = data["comb"][[tag, "ww"]].fillna(0).copy()
+    if stag != tag:
+        dplot = dplot.rename(columns={tag: stag})
+    return pmf1d_from_weights(
+        dplot,
+        stag,
+        nbins=nbins,
+        kT=kT,
+        rang=rang,
+        energy_offset=energy,
+    )
+
+
+def pmf1d_mbar(
+    mbar,
+    data,
+    tag,
+    *,
+    kT=kb * T,
+    nbins=100,
+    rang=None,
+    verbose=False,
+    energy_offset=None,
+    energy_col=None,
+):
+    """1D PMF via PyMBAR FES with optional target-state reweighting."""
     if "mbar" in mbar:
         mbar = mbar["mbar"]
 
     x = np.asarray(data[tag], float).ravel()
-    u_n = np.zeros(x.shape[0], float)
+    energy = _get_frame_energy(
+        data,
+        energy_offset=energy_offset,
+        energy_col=energy_col,
+    )
+    if energy is None:
+        u_n = np.zeros(x.shape[0], float)
+    else:
+        u_n = energy / float(kT)
 
     if rang is None:
         eps = 1e-12 * (float(x.max()) - float(x.min()) + 1.0)
@@ -1446,37 +1727,34 @@ def pmf1d_mbar(mbar, data, tag, *, kT=kb * T, nbins=100, rang=None, verbose=Fals
     )
 
 
-def pmf2d_from_weights(data, tag, *, wtag="ww", kT=kb * T, nbins=(100, 100), rang=None):
+def pmf2d_from_weights(
+    data,
+    tag,
+    *,
+    wtag="ww",
+    kT=kb * T,
+    nbins=(100, 100),
+    rang=None,
+    energy_offset=None,
+    energy_col=None,
+):
     """
-    Project onto a 2D reaction coordinate (x,y) using weights
+    Project onto a 2D reaction coordinate (x,y) using weights.
 
-    Parameters
-    ----------
-    data   : DataFrame
-        Panda data frame object
-    tag    : (str,str)
-        keys to access x and y values
-    wtag   : str
-        key to access weights, default: 'ww'
-    nbins : (int, int)
-        Number of histogram bins along x and y.
-    rang : ((float, float), (float,float))
-        min/max values for two dimensions, default is to use min/max values from data
-
-    Returns
-    -------
-    result : dict
-        {
-          'x_edges','y_edges',        # length nx+1, ny+1
-          'x_centers','y_centers',    # length nx, ny
-          'F_kT',                     # shape (nx, ny), np.nan where empty
-          'P',                        # normalized probability over bins (nx,ny), np.nan where empty
-        }
+    If `energy_offset` is given, it is interpreted as a per-frame target-state
+    energy offset in kJ/mol and applied as exp(-energy_offset / kT) before
+    histogramming.
     """
 
     x = np.asarray(data[tag[0]], float).ravel()
     y = np.asarray(data[tag[1]], float).ravel()
     w = np.asarray(data[wtag], float).ravel()
+    energy = _get_frame_energy(
+        data,
+        energy_offset=energy_offset,
+        energy_col=energy_col,
+    )
+    w = _apply_energy_offset_to_weights(w, energy, kT=kT)
 
     assert x.shape == y.shape == w.shape
     if rang is None:
@@ -1521,37 +1799,33 @@ def pmf2d_from_weights(data, tag, *, wtag="ww", kT=kb * T, nbins=(100, 100), ran
     )
 
 
-def pmf1d_from_weights(data, tag, *, wtag="ww", kT=kb * T, nbins=100, rang=None):
+def pmf1d_from_weights(
+    data,
+    tag,
+    *,
+    wtag="ww",
+    kT=kb * T,
+    nbins=100,
+    rang=None,
+    energy_offset=None,
+    energy_col=None,
+):
     """
     Project onto a 1D reaction coordinate x using weights.
 
-    Parameters
-    ----------
-    data  : DataFrame
-        Pandas DataFrame holding coordinate and weights.
-    tag   : str
-        Column key for x values (e.g., 'bend').
-    wtag  : str
-        Column key for weights (default: 'ww').
-    kT    : float
-        Thermal energy for scaling free energy to physical units (k_B T).
-    nbins : int
-        Number of histogram bins along x.
-    rang  : (float, float) or None
-        (xmin, xmax). If None, use min/max from data (with tiny pad).
-
-    Returns
-    -------
-    dict with:
-      'x_edges'   : length nbins+1
-      'x_centers' : length nbins
-      'F_kT'      : (nbins,) free energy [same units as kT], NaN where empty
-      'P'         : (nbins,) normalized probability, 0 where empty
-      'pmf'       : DataFrame (index=bin id), column name f"{tag}", values F_kT
-      'ranges'    : DataFrame with column tag giving bin centers
+    If `energy_offset` is given, it is interpreted as a per-frame target-state
+    energy offset in kJ/mol and applied as exp(-energy_offset / kT) before
+    histogramming.
     """
     x = np.asarray(data[tag], float).ravel()
     w = np.asarray(data[wtag], float).ravel()
+    energy = _get_frame_energy(
+        data,
+        energy_offset=energy_offset,
+        energy_col=energy_col,
+    )
+    w = _apply_energy_offset_to_weights(w, energy, kT=kT)
+
     assert x.shape == w.shape, "x and weights must have same length"
 
     if rang is None:
@@ -1579,7 +1853,15 @@ def pmf1d_from_weights(data, tag, *, wtag="ww", kT=kb * T, nbins=100, rang=None)
     pmf1d = pd.DataFrame({f"{tag}": F_kT}, index=idx)
     ranges = pd.DataFrame({tag: x_centers})
 
-    return dict(edges=xe, centers=x_centers, F_kT=F_kT, P=P, pmf=pmf1d, dpmf=None, ranges=ranges)
+    return dict(
+        edges=xe,
+        centers=x_centers,
+        F_kT=F_kT,
+        P=P,
+        pmf=pmf1d,
+        dpmf=None,
+        ranges=ranges,
+    )
 
 
 # plotting
@@ -1877,23 +2159,19 @@ def plot2D_combined(
     vertical=None,
     horizontal=None,
     nbins=(100, 100),
+    energy_offset=None,
+    energy_col=None,
     save=None,
 ):
-    if isinstance(xtag, list) and isinstance(ytag, list):
-        sxtag = xtag[0].rstrip("0123456789")
-        sytag = ytag[0].rstrip("0123456789")
-        dplotlist = []
-        for i in range(len(xtag)):
-            dp = df["comb"][[xtag[i], ytag[i], "ww"]].fillna(0)
-            dp.columns = [sxtag, sytag, "ww"]
-            dplotlist += [dp]
-        dplot = pd.concat(dplotlist)
-        res = pmf2d_from_weights(dplot, [sxtag, sytag], nbins=nbins)
-    else:
-        sxtag = xtag.rstrip("0123456789")
-        sytag = ytag.rstrip("0123456789")
-        dplot = df["comb"][[xtag, ytag, "ww"]].fillna(0)
-        res = pmf2d_from_weights(dplot, [xtag, ytag], nbins=nbins)
+    res, sxtag, sytag = _pmf2d_from_frame_data(
+        df["comb"],
+        xtag,
+        ytag,
+        nbins=nbins,
+        kT=kbT,
+        energy_offset=energy_offset,
+        energy_col=energy_col,
+    )
 
     dist2D(
         [res["pmf"]],
@@ -1927,36 +2205,39 @@ def plot2D_individual(
     vertical=None,
     nbins=(100, 100),
     horizontal=None,
+    energy_offset=None,
+    energy_col=None,
     save=None,
 ):
-
-    if isinstance(xtag, list) and isinstance(ytag, list):
-        sxtag = xtag[0].rstrip("0123456789")
-        sytag = ytag[0].rstrip("0123456789")
-    else:
-        sxtag = xtag.rstrip("0123456789")
-        sytag = ytag.rstrip("0123456789")
 
     if setlist is None:
         setlist = df["sets"]
 
+    if energy_offset is not None and energy_col is not None:
+        raise ValueError("Provide either energy_offset or energy_col, not both")
+
+    energy_by_set = _normalize_set_energy_offsets(
+        df,
+        energy_offset,
+        setlist=setlist,
+    )
+
     pmf = []
     rang = []
+    sxtag = None
+    sytag = None
     for p in setlist:
-        if isinstance(xtag, list) and isinstance(ytag, list):
-            dplotlist = []
-            for k in range(len(xtag)):
-                dp = df[p][[xtag[k], ytag[k], "ww"]].fillna(0)
-                dp.columns = [sxtag, sytag, "ww"]
-                dplotlist += [dp]
-            dplot = pd.concat(dplotlist)
-        else:
-            dplot = df[p][[xtag, ytag, "ww"]].fillna(0)
-
-        res = pmf2d_from_weights(dplot, [xtag, ytag], nbins=nbins)
-
-        pmf += [res["pmf"]]
-        rang += [res["ranges"]]
+        res, sxtag, sytag = _pmf2d_from_frame_data(
+            df[p],
+            xtag,
+            ytag,
+            nbins=nbins,
+            kT=kbT,
+            energy_offset=energy_by_set[p],
+            energy_col=energy_col,
+        )
+        pmf.append(res["pmf"])
+        rang.append(res["ranges"])
 
     dist2D(
         pmf,
@@ -2123,30 +2404,41 @@ def plot1D_grouped(
     average_overlay=False,
     vertical=None,
     horizontal=None,
+    energy_offset=None,
+    energy_col=None,
     save=None,
 ):
-    """Average replicate PMFs per group and plot group averages together.
-
-    `groups` can be:
-      - list[list[tiledata]]  (each inner list is a group of replicate datasets)
-      - dict[str, list[tiledata]]  (group name -> replicate datasets)
-
-    When `average_overlay=True`, individual replicate PMFs are plotted (no error
-    shading) along with the group averages (with SEM shading).
-    """
+    """Average replicate PMFs per group and plot group averages together."""
     if isinstance(groups, dict) and "comb" not in groups:
         group_names = list(groups.keys())
         group_list = list(groups.values())
+        if isinstance(energy_offset, dict):
+            missing = [k for k in group_names if k not in energy_offset]
+            if missing:
+                raise KeyError(f"Missing energy_offset groups: {missing}")
+            energy_input = [energy_offset[k] for k in group_names]
+        else:
+            energy_input = energy_offset
     else:
         group_names = None
         group_list = list(groups) if isinstance(groups, (list, tuple)) else [groups]
+        energy_input = energy_offset
+
+    energy_groups = _normalize_energy_structure(group_list, energy_input)
 
     norm_groups = []
-    for g in group_list:
+    norm_energy_groups = []
+    for g, ge in zip(group_list, energy_groups):
         if _is_tiledata_dict(g):
             norm_groups.append([g])
+            norm_energy_groups.append([ge])
         else:
             norm_groups.append(list(g))
+            if ge is None:
+                ge = [None] * len(g)
+            elif not isinstance(ge, (list, tuple)) or len(ge) != len(g):
+                raise ValueError("energy_offset must mirror grouped input data")
+            norm_energy_groups.append(list(ge))
 
     for g in norm_groups:
         if not g:
@@ -2171,10 +2463,12 @@ def plot1D_grouped(
 
     reps = []
     rep_group = []
-    for gi, g in enumerate(norm_groups):
-        for d in g:
+    rep_energy = []
+    for gi, (g, ge) in enumerate(zip(norm_groups, norm_energy_groups)):
+        for d, eo in zip(g, ge):
             reps.append(d)
             rep_group.append(gi)
+            rep_energy.append(eo)
 
     if isinstance(tag, list):
         taglist = list(tag)
@@ -2204,37 +2498,17 @@ def plot1D_grouped(
     pmf_rep = []
     ranges_rep = []
     err_rep = []
-
-    for d in reps:
-        if taglist is not None:
-            dplotlist = []
-            for t in taglist:
-                dp = d["comb"][[t, "ww"]].fillna(0).copy()
-                dp.columns = [stag, "ww"]
-                dplotlist.append(dp)
-            dplot = pd.concat(dplotlist, ignore_index=True)
-            res = pmf1d_from_weights(dplot, stag, nbins=nbins, kT=kbT, rang=rang)
-        else:
-            if usembar:
-                res = pmf1d_mbar(
-                    d["mbar"],
-                    d["comb"],
-                    tag,
-                    nbins=nbins,
-                    kT=kbT,
-                    rang=rang,
-                )
-                if stag != tag:
-                    res["pmf"] = res["pmf"].rename(columns={tag: stag})
-                    if res["dpmf"] is not None:
-                        res["dpmf"] = res["dpmf"].rename(columns={tag: stag})
-                    res["ranges"] = res["ranges"].rename(columns={tag: stag})
-            else:
-                dplot = d["comb"][[tag, "ww"]].fillna(0).copy()
-                if stag != tag:
-                    dplot = dplot.rename(columns={tag: stag})
-                res = pmf1d_from_weights(dplot, stag, nbins=nbins, kT=kbT, rang=rang)
-
+    for d, eo in zip(reps, rep_energy):
+        res = _pmf1d_from_tiledata(
+            d,
+            tag,
+            usembar=usembar,
+            kT=kbT,
+            nbins=nbins,
+            rang=rang,
+            energy_offset=eo,
+            energy_col=energy_col,
+        )
         pmf_rep.append(res["pmf"])
         ranges_rep.append(res["ranges"])
         err_rep.append(res["dpmf"])
@@ -2382,23 +2656,11 @@ def plot1D_combined(
     average_key="avg",
     vertical=None,
     horizontal=None,
+    energy_offset=None,
+    energy_col=None,
     save=None,
 ):
-    """Plot 1D PMFs.
-
-    Input handling
-    --------------
-    - plot1D_combined([d1, d2, d3], ...) plots each entry as an individual PMF.
-    - plot1D_combined([[d1, d2, d3]], ...) averages that group and plots the mean PMF.
-    - plot1D_combined([[d1, d2], d3, [d4, d5]], ...) averages groups and plots singles.
-
-    Averaging
-    ---------
-    - Explicit groups (list/tuple entries inside the top-level list) are averaged using
-      `average` if given, otherwise "boltzmann".
-    - If no explicit groups are present, setting `average` averages all provided PMFs
-      (optionally overlaying individuals via `average_overlay`).
-    """
+    """Plot 1D PMFs with optional per-frame target-state reweighting."""
     if isinstance(df, dict) and "comb" not in df:
         avg_mode = average if average is not None else "boltzmann"
         plot1D_grouped(
@@ -2423,17 +2685,22 @@ def plot1D_combined(
             average_overlay=average_overlay,
             vertical=vertical,
             horizontal=horizontal,
+            energy_offset=energy_offset,
+            energy_col=energy_col,
             save=save,
         )
         return
 
     top = list(df) if isinstance(df, (list, tuple)) else [df]
+    energy_top = _normalize_energy_structure(top, energy_offset)
 
     groups: list[list[dict]] = []
+    group_energy = []
     is_group: list[bool] = []
-    for it in top:
+    for it, eo in zip(top, energy_top):
         if _is_tiledata_dict(it):
             groups.append([it])
+            group_energy.append(eo)
             is_group.append(False)
             continue
         if isinstance(it, (list, tuple)):
@@ -2443,7 +2710,12 @@ def plot1D_combined(
             for d in g:
                 if not _is_tiledata_dict(d):
                     raise TypeError("plot1D_combined: group entries must be tiledata dicts")
+            if eo is None:
+                eo = [None] * len(g)
+            elif not isinstance(eo, (list, tuple)) or len(eo) != len(g):
+                raise ValueError("energy_offset must mirror grouped input data")
             groups.append(g)
+            group_energy.append(list(eo))
             is_group.append(True)
             continue
         raise TypeError("plot1D_combined: df must be tiledata dicts or lists of them")
@@ -2465,10 +2737,17 @@ def plot1D_combined(
 
         reps: list[dict] = []
         rep_item: list[int] = []
-        for gi, g in enumerate(groups):
-            for d in g:
-                reps.append(d)
+        rep_energy = []
+        for gi, (g, ge) in enumerate(zip(groups, group_energy)):
+            if is_group[gi]:
+                for d, eo in zip(g, ge):
+                    reps.append(d)
+                    rep_item.append(gi)
+                    rep_energy.append(eo)
+            else:
+                reps.append(g[0])
                 rep_item.append(gi)
+                rep_energy.append(ge)
 
         vals = []
         for d in reps:
@@ -2491,36 +2770,17 @@ def plot1D_combined(
         pmf_rep = []
         ranges_rep = []
         err_rep = []
-        for d in reps:
-            if taglist is not None:
-                dplotlist = []
-                for t in taglist:
-                    dp = d["comb"][[t, "ww"]].fillna(0).copy()
-                    dp.columns = [stag, "ww"]
-                    dplotlist.append(dp)
-                dplot = pd.concat(dplotlist, ignore_index=True)
-                res = pmf1d_from_weights(dplot, stag, nbins=nbins, kT=kbT, rang=rang)
-            else:
-                if usembar:
-                    res = pmf1d_mbar(
-                        d["mbar"],
-                        d["comb"],
-                        tag,
-                        nbins=nbins,
-                        kT=kbT,
-                        rang=rang,
-                    )
-                    if stag != tag:
-                        res["pmf"] = res["pmf"].rename(columns={tag: stag})
-                        if res["dpmf"] is not None:
-                            res["dpmf"] = res["dpmf"].rename(columns={tag: stag})
-                        res["ranges"] = res["ranges"].rename(columns={tag: stag})
-                else:
-                    dplot = d["comb"][[tag, "ww"]].fillna(0).copy()
-                    if stag != tag:
-                        dplot = dplot.rename(columns={tag: stag})
-                    res = pmf1d_from_weights(dplot, stag, nbins=nbins, kT=kbT, rang=rang)
-
+        for d, eo in zip(reps, rep_energy):
+            res = _pmf1d_from_tiledata(
+                d,
+                tag,
+                usembar=usembar,
+                kT=kbT,
+                nbins=nbins,
+                rang=rang,
+                energy_offset=eo,
+                energy_col=energy_col,
+            )
             pmf_rep.append(res["pmf"])
             ranges_rep.append(res["ranges"])
             err_rep.append(res["dpmf"])
@@ -2623,29 +2883,28 @@ def plot1D_combined(
         )
         return
 
-    # no explicit groups: preserve the old behavior (plot individual or average all)
     pmf = []
     ranges = []
     err = []
 
     dflist = top
+    energy_list = list(energy_top)
 
     if isinstance(tag, list):
-        taglist = list(tag)
-        stag = taglist[0].rstrip("0123456789")
+        stag = tag[0].rstrip("0123456789")
     else:
-        taglist = None
         stag = str(tag).rstrip("0123456789")
 
     rang = None
     if average is not None:
         vals = []
-        for d in dflist:
-            if taglist is None:
-                vals.append(np.asarray(d["comb"][tag], float).ravel())
-            else:
-                for t in taglist:
+        if isinstance(tag, list):
+            for d in dflist:
+                for t in tag:
                     vals.append(np.asarray(d["comb"][t], float).ravel())
+        else:
+            for d in dflist:
+                vals.append(np.asarray(d["comb"][tag], float).ravel())
         x = np.concatenate(vals)
         x = x[np.isfinite(x)]
         if x.size == 0:
@@ -2655,36 +2914,17 @@ def plot1D_combined(
         pad = 1e-12 * (xmax - xmin + 1.0)
         rang = (xmin, xmax + pad)
 
-    for d in dflist:
-        if taglist is not None:
-            dplotlist = []
-            for t in taglist:
-                dp = d["comb"][[t, "ww"]].fillna(0).copy()
-                dp.columns = [stag, "ww"]
-                dplotlist.append(dp)
-            dplot = pd.concat(dplotlist, ignore_index=True)
-            res = pmf1d_from_weights(dplot, stag, nbins=nbins, kT=kbT, rang=rang)
-        else:
-            if usembar:
-                res = pmf1d_mbar(
-                    d["mbar"],
-                    d["comb"],
-                    tag,
-                    nbins=nbins,
-                    kT=kbT,
-                    rang=rang,
-                )
-                if stag != tag:
-                    res["pmf"] = res["pmf"].rename(columns={tag: stag})
-                    if res["dpmf"] is not None:
-                        res["dpmf"] = res["dpmf"].rename(columns={tag: stag})
-                    res["ranges"] = res["ranges"].rename(columns={tag: stag})
-            else:
-                dplot = d["comb"][[tag, "ww"]].fillna(0).copy()
-                if stag != tag:
-                    dplot = dplot.rename(columns={tag: stag})
-                res = pmf1d_from_weights(dplot, stag, nbins=nbins, kT=kbT, rang=rang)
-
+    for d, eo in zip(dflist, energy_list):
+        res = _pmf1d_from_tiledata(
+            d,
+            tag,
+            usembar=usembar,
+            kT=kbT,
+            nbins=nbins,
+            rang=rang,
+            energy_offset=eo,
+            energy_col=energy_col,
+        )
         pmf.append(res["pmf"])
         ranges.append(res["ranges"])
         err.append(res["dpmf"])
