@@ -1,10 +1,12 @@
+
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Optional, Union
+from typing import Any, Optional, Sequence, Union
 
 import numpy as np
+
+
 
 ArrayLike = Union[float, Sequence[float], np.ndarray]
 
@@ -273,9 +275,129 @@ def switch_energy_offsets_from_distances(
 ) -> np.ndarray:
     """Return target - reference switch energy, in kJ/mol."""
     _check_same_pairs(reference, target)
-    return switch_energy_from_distances(dist_nm, target) - switch_energy_from_distances(
-        dist_nm, reference
+    return (
+        switch_energy_from_distances(dist_nm, target)
+        - switch_energy_from_distances(dist_nm, reference)
     )
+
+
+def umbrella_keep_mask(
+    n_frames: int,
+    *,
+    n_umbrellas: int,
+    umbrella_skip: int = 0,
+    frames_per_umbrella: Optional[int] = None,
+) -> np.ndarray:
+    """
+    Boolean mask for a concatenated umbrella trajectory.
+
+    Parameters
+    ----------
+    n_frames
+        Total number of frames in the concatenated trajectory.
+    n_umbrellas
+        Number of umbrella windows in the concatenation.
+    umbrella_skip
+        Number of leading frames to discard from each umbrella block.
+    frames_per_umbrella
+        Frames in each umbrella block. If omitted, inferred from n_frames.
+
+    Returns
+    -------
+    np.ndarray
+        Shape (n_frames,), dtype bool.
+    """
+
+    n_frames = int(n_frames)
+    n_umbrellas = int(n_umbrellas)
+    umbrella_skip = int(umbrella_skip)
+
+    if n_frames < 0:
+        raise ValueError("n_frames must be >= 0")
+    if n_umbrellas <= 0:
+        raise ValueError("n_umbrellas must be >= 1")
+    if umbrella_skip < 0:
+        raise ValueError("umbrella_skip must be >= 0")
+
+    if n_frames == 0:
+        return np.empty((0,), dtype=bool)
+
+    if frames_per_umbrella is None:
+        if n_frames % n_umbrellas != 0:
+            raise ValueError(
+                "n_frames is not divisible by n_umbrellas; "
+                "provide frames_per_umbrella explicitly"
+            )
+        frames_per_umbrella = n_frames // n_umbrellas
+    else:
+        frames_per_umbrella = int(frames_per_umbrella)
+        if frames_per_umbrella <= 0:
+            raise ValueError("frames_per_umbrella must be >= 1")
+        expected = n_umbrellas * frames_per_umbrella
+        if n_frames != expected:
+            raise ValueError(
+                f"expected {expected} frames from "
+                f"n_umbrellas={n_umbrellas} and "
+                f"frames_per_umbrella={frames_per_umbrella}, got {n_frames}"
+            )
+
+    if umbrella_skip >= frames_per_umbrella:
+        raise ValueError(
+            "umbrella_skip must be smaller than frames_per_umbrella"
+        )
+
+    frame_in_block = np.arange(n_frames, dtype=np.int64) % frames_per_umbrella
+    return frame_in_block >= umbrella_skip
+
+
+def apply_umbrella_skip(
+    values: np.ndarray,
+    *,
+    n_umbrellas: int,
+    umbrella_skip: int = 0,
+    frames_per_umbrella: Optional[int] = None,
+    axis: int = 0,
+) -> np.ndarray:
+    """
+    Drop the first umbrella_skip frames from each umbrella block.
+
+    Parameters
+    ----------
+    values
+        Array with the frame axis along ``axis``.
+    n_umbrellas
+        Number of umbrella windows in the concatenation.
+    umbrella_skip
+        Number of leading frames to discard from each umbrella block.
+    frames_per_umbrella
+        Frames in each umbrella block. If omitted, inferred from
+        ``values.shape[axis]``.
+    axis
+        Axis corresponding to frames.
+
+    Returns
+    -------
+    np.ndarray
+        A view/copy with the skipped frames removed.
+    """
+
+    arr = np.asarray(values)
+    if arr.ndim == 0:
+        raise ValueError("values must have at least one dimension")
+
+    axis = int(axis)
+    if axis < 0:
+        axis += arr.ndim
+    if axis < 0 or axis >= arr.ndim:
+        raise ValueError("axis is out of bounds")
+
+    mask = umbrella_keep_mask(
+        arr.shape[axis],
+        n_umbrellas=n_umbrellas,
+        umbrella_skip=umbrella_skip,
+        frames_per_umbrella=frames_per_umbrella,
+    )
+    return np.compress(mask, arr, axis=axis)
 
 
 def pair_distances_nm(
@@ -328,6 +450,9 @@ def precompute_switch_distances_from_structure(
     terms: SwitchTerms,
     *,
     box_nm: Optional[ArrayLike] = None,
+    n_umbrellas: Optional[int] = None,
+    umbrella_skip: int = 0,
+    frames_per_umbrella: Optional[int] = None,
 ) -> np.ndarray:
     """
     Precompute all switch-pair distances from a loaded trajectory.
@@ -336,12 +461,27 @@ def precompute_switch_distances_from_structure(
     -----
     molecule_data.load_dcd stores coordinates but not box lengths, so exact PBC
     matching requires passing box_nm explicitly or using iter_dcd-based streaming.
+
+    If ``n_umbrellas`` is given, the first ``umbrella_skip`` frames of each
+    umbrella block are removed from the returned distance matrix.
     """
 
     coords = getattr(trajectory, "_coords_nm", None)
     if coords is None:
         coords = _coords_from_models(trajectory)
-    return pair_distances_nm(coords, terms.pairs, box_nm=None if box_nm is None else box_nm)
+
+    dist = pair_distances_nm(
+        coords,
+        terms.pairs,
+        box_nm=None if box_nm is None else box_nm,
+    )
+    return _maybe_apply_umbrella_skip(
+        dist,
+        n_umbrellas=n_umbrellas,
+        umbrella_skip=umbrella_skip,
+        frames_per_umbrella=frames_per_umbrella,
+        axis=0,
+    )
 
 
 def precompute_switch_distances_from_dcd(
@@ -354,11 +494,18 @@ def precompute_switch_distances_from_dcd(
     box_nm: Optional[ArrayLike] = None,
     frame_start: int = 0,
     frame_stop: Optional[int] = None,
+    n_umbrellas: Optional[int] = None,
+    umbrella_skip: int = 0,
+    frames_per_umbrella: Optional[int] = None,
 ) -> np.ndarray:
     """
     Stream a DCD and precompute all switch-pair distances.
 
     Only atoms needed by the switch pairs are read from the DCD.
+
+    Umbrella skipping is applied after ``stride`` and ``frame_start/frame_stop``.
+    If ``frames_per_umbrella`` is omitted, it is inferred from the number of
+    selected frames and ``n_umbrellas``.
     """
 
     atom_idx, local_pairs = _compressed_pairs(terms.pairs)
@@ -387,9 +534,17 @@ def precompute_switch_distances_from_dcd(
         d_blocks.append(np.asarray(d_frame, dtype=np.float64))
 
     if not d_blocks:
-        return np.empty((0, terms.n_pairs), dtype=np.float64)
+        dist = np.empty((0, terms.n_pairs), dtype=np.float64)
+    else:
+        dist = np.vstack(d_blocks)
 
-    return np.vstack(d_blocks)
+    return _maybe_apply_umbrella_skip(
+        dist,
+        n_umbrellas=n_umbrellas,
+        umbrella_skip=umbrella_skip,
+        frames_per_umbrella=frames_per_umbrella,
+        axis=0,
+    )
 
 
 def switch_energies_from_dcd(
@@ -402,6 +557,9 @@ def switch_energies_from_dcd(
     box_nm: Optional[ArrayLike] = None,
     frame_start: int = 0,
     frame_stop: Optional[int] = None,
+    n_umbrellas: Optional[int] = None,
+    umbrella_skip: int = 0,
+    frames_per_umbrella: Optional[int] = None,
 ) -> np.ndarray:
     """Direct streaming energy evaluation for one SwitchTerms object."""
     dist = precompute_switch_distances_from_dcd(
@@ -413,6 +571,9 @@ def switch_energies_from_dcd(
         box_nm=box_nm,
         frame_start=frame_start,
         frame_stop=frame_stop,
+        n_umbrellas=n_umbrellas,
+        umbrella_skip=umbrella_skip,
+        frames_per_umbrella=frames_per_umbrella,
     )
     return switch_energy_from_distances(dist, terms)
 
@@ -428,6 +589,9 @@ def switch_energy_offsets_from_dcd(
     box_nm: Optional[ArrayLike] = None,
     frame_start: int = 0,
     frame_stop: Optional[int] = None,
+    n_umbrellas: Optional[int] = None,
+    umbrella_skip: int = 0,
+    frames_per_umbrella: Optional[int] = None,
 ) -> np.ndarray:
     """
     Stream a DCD once and return target - reference switch energies.
@@ -442,8 +606,41 @@ def switch_energy_offsets_from_dcd(
         box_nm=box_nm,
         frame_start=frame_start,
         frame_stop=frame_stop,
+        n_umbrellas=n_umbrellas,
+        umbrella_skip=umbrella_skip,
+        frames_per_umbrella=frames_per_umbrella,
     )
     return switch_energy_offsets_from_distances(dist, reference, target)
+
+
+def _maybe_apply_umbrella_skip(
+    values: np.ndarray,
+    *,
+    n_umbrellas: Optional[int] = None,
+    umbrella_skip: int = 0,
+    frames_per_umbrella: Optional[int] = None,
+    axis: int = 0,
+) -> np.ndarray:
+    arr = np.asarray(values)
+    if (
+        n_umbrellas is None
+        and int(umbrella_skip) == 0
+        and frames_per_umbrella is None
+    ):
+        return arr
+
+    if n_umbrellas is None:
+        raise ValueError(
+            "n_umbrellas is required when umbrella frame skipping is requested"
+        )
+
+    return apply_umbrella_skip(
+        arr,
+        n_umbrellas=n_umbrellas,
+        umbrella_skip=umbrella_skip,
+        frames_per_umbrella=frames_per_umbrella,
+        axis=axis,
+    )
 
 
 def _iter_dcd(*args: Any, **kwargs: Any) -> Any:
