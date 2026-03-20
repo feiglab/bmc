@@ -448,9 +448,9 @@ def switch_energy_offsets_from_dcd(
 
 def _iter_dcd(*args: Any, **kwargs: Any) -> Any:
     try:
-        from .molecule_data import iter_dcd
+        from mdsim.molecule_data import iter_dcd
     except ImportError:  # pragma: no cover
-        from molecule_data import iter_dcd
+        from mdsim.molecule_data import iter_dcd
     return iter_dcd(*args, **kwargs)
 
 
