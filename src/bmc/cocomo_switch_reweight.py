@@ -1,12 +1,10 @@
-
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Optional, Sequence, Union
+from typing import Any, Optional, Union
 
 import numpy as np
-
-
 
 ArrayLike = Union[float, Sequence[float], np.ndarray]
 
@@ -275,9 +273,8 @@ def switch_energy_offsets_from_distances(
 ) -> np.ndarray:
     """Return target - reference switch energy, in kJ/mol."""
     _check_same_pairs(reference, target)
-    return (
-        switch_energy_from_distances(dist_nm, target)
-        - switch_energy_from_distances(dist_nm, reference)
+    return switch_energy_from_distances(dist_nm, target) - switch_energy_from_distances(
+        dist_nm, reference
     )
 
 
@@ -342,9 +339,7 @@ def umbrella_keep_mask(
             )
 
     if umbrella_skip >= frames_per_umbrella:
-        raise ValueError(
-            "umbrella_skip must be smaller than frames_per_umbrella"
-        )
+        raise ValueError("umbrella_skip must be smaller than frames_per_umbrella")
 
     frame_in_block = np.arange(n_frames, dtype=np.int64) % frames_per_umbrella
     return frame_in_block >= umbrella_skip
@@ -622,17 +617,11 @@ def _maybe_apply_umbrella_skip(
     axis: int = 0,
 ) -> np.ndarray:
     arr = np.asarray(values)
-    if (
-        n_umbrellas is None
-        and int(umbrella_skip) == 0
-        and frames_per_umbrella is None
-    ):
+    if n_umbrellas is None and int(umbrella_skip) == 0 and frames_per_umbrella is None:
         return arr
 
     if n_umbrellas is None:
-        raise ValueError(
-            "n_umbrellas is required when umbrella frame skipping is requested"
-        )
+        raise ValueError("n_umbrellas is required when umbrella frame skipping is requested")
 
     return apply_umbrella_skip(
         arr,

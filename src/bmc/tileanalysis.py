@@ -10,12 +10,14 @@
 
 from __future__ import annotations
 
+import contextlib
 import gzip
 import logging
+import os
 import re
 import sys
 import warnings
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 import gemmi
@@ -156,6 +158,28 @@ plt.rcParams.update(
         "figure.titlesize": 20,
     }
 )
+
+
+@contextlib.contextmanager
+def _suppress_c_stdout_stderr(enabled: bool = True) -> Iterator[None]:
+    if not enabled:
+        yield
+        return
+
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    old_out = os.dup(1)
+    old_err = os.dup(2)
+    try:
+        os.dup2(devnull, 1)
+        os.dup2(devnull, 2)
+        yield
+    finally:
+        os.dup2(old_out, 1)
+        os.dup2(old_err, 2)
+        os.close(old_out)
+        os.close(old_err)
+        os.close(devnull)
+
 
 # tile geometry analysis
 
@@ -499,7 +523,8 @@ def hh_analysis(dir=".", *, caname="CA.pdb", trajname="CA.xtc"):
         str(capdb), ["A", "B", "E", "F", "C", "D"], str(capdb), ["G", "H", "K", "L", "I", "J"]
     )
 
-    t = md.load(str(p / trajname), top=str(capdb))
+    with _suppress_c_stdout_stderr():
+        t = md.load(str(p / trajname), top=str(capdb))
     d, ang, eu, sx, sy, sz = hh_dimergeom(t, clist[0], t, clist[1])
 
     d, ang, sx, sy, sz = map(np.ravel, (d, ang, sx, sy, sz))
@@ -527,7 +552,8 @@ def ph_analysis(dir=".", *, caname="CA.pdb", trajname="CA.xtc"):
         str(capdb), ["A", "B", "C", "D", "E"], str(capdb), ["F", "G", "J", "K", "H", "I"]
     )
 
-    t = md.load(str(p / trajname), top=str(capdb))
+    with _suppress_c_stdout_stderr():
+        t = md.load(str(p / trajname), top=str(capdb))
     d, ang, eu, sx, sy, sz = ph_dimergeom(t, clist[0], t, clist[1])
 
     d, ang, sx, sy, sz = map(np.ravel, (d, ang, sx, sy, sz))
@@ -553,7 +579,8 @@ def th_analysis(dir=".", *, caname="CA.pdb", trajname="CA.xtc"):
     capdb = p / caname
     clist = th_dimeridx(str(capdb), ["A", "C", "B"], str(capdb), ["D", "E", "H", "I", "F", "G"])
 
-    t = md.load(str(p / trajname), top=str(capdb))
+    with _suppress_c_stdout_stderr():
+        t = md.load(str(p / trajname), top=str(capdb))
     d, ang, eu, sx, sy, sz = th_dimergeom(t, clist[0], t, clist[1])
 
     d, ang, sx, sy, sz = map(np.ravel, (d, ang, sx, sy, sz))
