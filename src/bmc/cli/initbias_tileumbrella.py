@@ -222,6 +222,8 @@ def main() -> None:
 
     rc = [StructureSelector(tile + ".CA").atom_indices(s) for tile in reftile]
     rcref = [s.center(r)[0] for r in rc]
+    print(reftile)
+    print(rcref)
 
     aca1 = StructureSelector(asel1 + ".CA").atom_indices(s)
     aca2 = StructureSelector(asel2 + ".CA").atom_indices(s)
