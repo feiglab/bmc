@@ -153,7 +153,12 @@ def update_switch_terms(
     Parameters
     ----------
     eps, r0, alpha
-        Scalar or length-n_selected arrays.
+        Accepted forms:
+        - scalar: applied to all selected pairs
+        - length-n_selected: one value per selected pair
+        - length-n_terms: one value per selected term_id, broadcast to all
+          selected pairs in that term. This mode is enabled when term_ids
+          is provided.
     pair_mask
         Boolean mask over pairs.
     term_ids
@@ -166,25 +171,102 @@ def update_switch_terms(
         if pair_mask.shape != (terms.n_pairs,):
             raise ValueError("pair_mask has wrong shape")
         mask &= pair_mask
+
+    term_ids_arr: Optional[np.ndarray] = None
     if term_ids is not None:
-        mask &= np.isin(terms.term_id, np.asarray(term_ids, dtype=np.int64))
+        term_ids_arr = np.asarray(term_ids, dtype=np.int64).reshape(-1)
+        mask &= np.isin(terms.term_id, term_ids_arr)
 
     eps_out = terms.eps.copy()
     r0_out = terms.r0.copy()
     alpha_out = terms.alpha.copy()
 
     if eps is not None:
-        eps_out[mask] = _broadcast_selected(eps, int(mask.sum()))
+        eps_out[mask] = _broadcast_selected_or_terms(
+            eps,
+            mask=mask,
+            selected_term_ids=term_ids_arr,
+            pair_term_id=terms.term_id,
+            name="eps",
+        )
     if r0 is not None:
-        r0_out[mask] = _broadcast_selected(r0, int(mask.sum()))
+        r0_out[mask] = _broadcast_selected_or_terms(
+            r0,
+            mask=mask,
+            selected_term_ids=term_ids_arr,
+            pair_term_id=terms.term_id,
+            name="r0",
+        )
     if alpha is not None:
-        alpha_out[mask] = _broadcast_selected(alpha, int(mask.sum()))
+        alpha_out[mask] = _broadcast_selected_or_terms(
+            alpha,
+            mask=mask,
+            selected_term_ids=term_ids_arr,
+            pair_term_id=terms.term_id,
+            name="alpha",
+        )
 
     return replace(
         terms,
         eps=eps_out,
         r0=r0_out,
         alpha=alpha_out,
+    )
+
+
+def _broadcast_selected_or_terms(
+    values: ArrayLike,
+    *,
+    mask: np.ndarray,
+    selected_term_ids: Optional[np.ndarray],
+    pair_term_id: np.ndarray,
+    name: str,
+) -> np.ndarray:
+    arr = np.asarray(values, dtype=np.float64)
+    n_selected = int(mask.sum())
+
+    if arr.ndim == 0:
+        return np.full((n_selected,), float(arr), dtype=np.float64)
+
+    arr = arr.reshape(-1)
+
+    if arr.shape == (n_selected,):
+        return arr.astype(np.float64, copy=False)
+
+    if selected_term_ids is None:
+        raise ValueError(f"{name} expected scalar or {n_selected} values, " f"got {arr.shape[0]}")
+
+    if arr.shape != (selected_term_ids.shape[0],):
+        raise ValueError(
+            f"{name} expected scalar, {n_selected} pair values, or "
+            f"{selected_term_ids.shape[0]} term values, got {arr.shape[0]}"
+        )
+
+    out = np.empty((n_selected,), dtype=np.float64)
+    selected_pair_terms = pair_term_id[mask]
+
+    for i, term_id in enumerate(selected_term_ids):
+        out[selected_pair_terms == term_id] = arr[i]
+
+    return out
+
+
+def update_switch_terms_by_term(
+    terms: SwitchTerms,
+    *,
+    eps: Optional[ArrayLike] = None,
+    r0: Optional[ArrayLike] = None,
+    alpha: Optional[ArrayLike] = None,
+    term_ids: Optional[Sequence[int]] = None,
+) -> SwitchTerms:
+    if term_ids is None:
+        term_ids = np.unique(terms.term_id)
+    return update_switch_terms(
+        terms,
+        eps=eps,
+        r0=r0,
+        alpha=alpha,
+        term_ids=term_ids,
     )
 
 

@@ -686,32 +686,69 @@ def build_anchor_selections(
     othersel: str,
     anchor: str,
 ) -> tuple[str, ...]:
-    ref_anchor, other_anchor = anchor.split(":")
+    ref_anchor, other_anchor = anchor.split(":", maxsplit=1)
 
+    # ------------------------------------------------------------------
+    # Reference selection
+    # ------------------------------------------------------------------
     ref_base, ref_dot, ref_suffix = refsel.partition(".")
     ref_tiles = ref_base.split(":")
     ref_tail = f".{ref_suffix}" if ref_dot else ""
 
-    ref_index = ref_tiles.index(ref_anchor)
+    try:
+        ref_index = ref_tiles.index(ref_anchor)
+    except ValueError as exc:
+        raise ValueError(f"Reference anchor {ref_anchor!r} is not present in {refsel!r}") from exc
+
     ref_size = len(ref_tiles)
 
-    asel1 = f"{ref_tiles[ref_index]}:{ref_tiles[(ref_index + 1) % ref_size]}{ref_tail}"
-    asel2 = (
-        f"{ref_tiles[(ref_index + 2) % ref_size]}:"
-        f"{ref_tiles[(ref_index + 3) % ref_size]}{ref_tail}"
-    )
-    aselt = (
-        f"{ref_tiles[ref_index]}:{ref_tiles[(ref_index + 2) % ref_size]}:"
-        f"{ref_tiles[(ref_index + 3) % ref_size]}{ref_tail}"
-    )
+    if ref_size == 6:
+        asel1 = f"{ref_tiles[ref_index]}:" f"{ref_tiles[(ref_index + 1) % ref_size]}{ref_tail}"
+        asel2 = (
+            f"{ref_tiles[(ref_index + 2) % ref_size]}:"
+            f"{ref_tiles[(ref_index + 3) % ref_size]}{ref_tail}"
+        )
+        aselt = (
+            f"{ref_tiles[ref_index]}:"
+            f"{ref_tiles[(ref_index + 2) % ref_size]}:"
+            f"{ref_tiles[(ref_index + 3) % ref_size]}{ref_tail}"
+        )
+
+    elif ref_size == 5:
+        asel1 = f"{ref_tiles[ref_index]}:" f"{ref_tiles[(ref_index + 1) % ref_size]}{ref_tail}"
+        asel2 = (
+            f"{ref_tiles[(ref_index + 3) % ref_size]}:"
+            f"{ref_tiles[(ref_index + 4) % ref_size]}{ref_tail}"
+        )
+        aselt = (
+            f"{ref_tiles[ref_index]}:"
+            f"{ref_tiles[(ref_index + 1) % ref_size]}:"
+            f"{ref_tiles[(ref_index + 4) % ref_size]}{ref_tail}"
+        )
+
+    elif ref_size == 3:
+        asel1 = f"{ref_tiles[ref_index]}{ref_tail}"
+        asel2 = f"{ref_tiles[(ref_index + 1) % ref_size]}{ref_tail}"
+        aselt = f"{ref_tiles[ref_index]}:" f"{ref_tiles[(ref_index + 1) % ref_size]}{ref_tail}"
+
+    else:
+        raise ValueError(f"Invalid reference selection length {ref_size}; " "expected 3, 5, or 6")
+
     as11 = f"{ref_tiles[ref_index]}{ref_tail}"
     as12 = f"{ref_tiles[(ref_index + 1) % ref_size]}{ref_tail}"
 
+    # ------------------------------------------------------------------
+    # Other selection
+    # ------------------------------------------------------------------
     other_base, other_dot, other_suffix = othersel.partition(".")
     other_tiles = other_base.split(":")
     other_tail = f".{other_suffix}" if other_dot else ""
 
-    other_index = other_tiles.index(other_anchor)
+    try:
+        other_index = other_tiles.index(other_anchor)
+    except ValueError as exc:
+        raise ValueError(f"Other anchor {other_anchor!r} is not present in {othersel!r}") from exc
+
     other_size = len(other_tiles)
 
     if other_size == 6:
@@ -732,6 +769,7 @@ def build_anchor_selections(
             f"{other_tiles[(other_index + 2) % other_size]}:"
             f"{other_tiles[(other_index + 5) % other_size]}{other_tail}"
         )
+
     elif other_size == 5:
         bsel1 = (
             f"{other_tiles[other_index]}:"
@@ -747,6 +785,7 @@ def build_anchor_selections(
             f"{other_tiles[(other_index + 4) % other_size]}{other_tail}"
         )
         bselc = bsel2
+
     elif other_size == 3:
         bsel1 = f"{other_tiles[other_index]}{other_tail}"
         bsel2 = f"{other_tiles[(other_index + 1) % other_size]}{other_tail}"
@@ -755,10 +794,21 @@ def build_anchor_selections(
             f"{other_tiles[(other_index + 1) % other_size]}{other_tail}"
         )
         bselc = bsel2
-    else:
-        raise SystemExit("ERROR: invalid length of other selection")
 
-    return asel1, asel2, aselt, bsel1, bsel2, bselt, as11, as12, bselc
+    else:
+        raise ValueError(f"Invalid other selection length {other_size}; " "expected 3, 5, or 6")
+
+    return (
+        asel1,
+        asel2,
+        aselt,
+        bsel1,
+        bsel2,
+        bselt,
+        as11,
+        as12,
+        bselc,
+    )
 
 
 def format_bias_tag(bias: float, biasangle: Optional[float] = None) -> str:
