@@ -416,6 +416,74 @@ def th_dimeridx(pdb1, chlist1, pdb2, chlist2, resmin1=5, resmax1=205, resmin2=3,
     return [idxlist1, idxlist2]
 
 
+def tt_dimeridx(pdb1, chlist1, pdb2, chlist2, resmin1=5, resmax1=205, resmin2=5, resmax2=205):
+    s1 = gemmi.read_structure(pdb1)
+    s2 = gemmi.read_structure(pdb2)
+
+    xyzc1 = {}
+    c1c = {}
+    for k in chlist1:
+        alist = [a for res in s1[0][k] for a in res if a.name == "CA"]
+        xyzc1[k] = np.array([[a.pos.x, a.pos.y, a.pos.z] for a in alist], dtype=float)
+        c1c[k] = np.average(xyzc1[k], axis=0)
+
+    xyzc2 = {}
+    c2c = {}
+    for k in chlist2:
+        alist = [a for res in s2[0][k] for a in res if a.name == "CA"]
+        xyzc2[k] = np.array([[a.pos.x, a.pos.y, a.pos.z] for a in alist], dtype=float)
+        c2c[k] = np.average(xyzc2[k], axis=0)
+
+    dmat = {(k1, k2): np.linalg.norm(c2c[k2] - c1c[k1]) for k1 in chlist1 for k2 in chlist2}
+
+    (c1alabel, c2alabel), _ = min(dmat.items(), key=lambda kv: kv[1])
+
+    n1 = len(chlist1)
+    n2 = len(chlist2)
+    idx1 = {k: i for i, k in enumerate(chlist1)}
+    idx2 = {k: i for i, k in enumerate(chlist2)}
+
+    def at1(base, off):
+        return chlist1[(idx1[base] + off) % n1]
+
+    def at2(base, off):
+        return chlist2[(idx2[base] + off) % n2]
+
+    def prev1(k):
+        return at1(k, -1)
+
+    def next1(k):
+        return at1(k, +1)
+
+    def next2(k):
+        return at2(k, -1)
+
+    def prev2(k):
+        return at2(k, +1)
+
+    c1prev, c1next = prev1(c1alabel), next1(c1alabel)
+    c2prev, c2next = prev2(c2alabel), next2(c2alabel)
+
+    dpp = dmat[(c1prev, c2prev)]
+    dpn = dmat[(c1prev, c2next)]
+    dnp = dmat[(c1next, c2prev)]
+    dnn = dmat[(c1next, c2next)]
+
+    if dpp <= dpn and dpp <= dnp and dpp <= dnn:
+        off1, off2 = (range(1, 4), range(0, 3))
+    elif dpn <= dpp and dpn <= dnp and dpn <= dnn:
+        off1, off2 = (range(1, 4), range(0, 3))
+    elif dnp <= dpp and dnp <= dpn and dnp <= dnn:
+        off1, off2 = (range(2, 5), range(0, 3))
+    else:
+        off1, off2 = (range(2, 5), range(0, 3))
+
+    idxlist1 = [indices_of_chain(s1, at1(c1alabel, o), resmin1, resmax1) for o in off1]
+    idxlist2 = [indices_of_chain(s2, at2(c2alabel, o), resmin2, resmax2) for o in off2]
+
+    return [idxlist1, idxlist2]
+
+
 def dimergeom(c1, c2, x1, y1, z1, x2, y2, z2):
     d = c2 - c1
     dist = np.linalg.norm(d, axis=1, keepdims=True)  # in nm
@@ -515,6 +583,32 @@ def th_dimergeom(traj1, idx1, traj2, idx2):
     return dimergeom(c1, c2, x1, y1, z1, x2, y2, z2)
 
 
+def tt_dimergeom(traj1, idx1, traj2, idx2):
+    c1list = [x for c in idx1 for x in c]
+    c1 = np.average(traj1.xyz[:, c1list], axis=1)
+
+    c2list = [x for c in idx2 for x in c]
+    c2 = np.average(traj2.xyz[:, c2list], axis=1)
+
+    c1c = {}
+    for kidx, lidx in enumerate(idx1):
+        c1c[kidx] = np.average(traj1.xyz[:, lidx], axis=1)
+
+    c2c = {}
+    for kidx, lidx in enumerate(idx2):
+        c2c[kidx] = np.average(traj2.xyz[:, lidx], axis=1)
+
+    x1 = (c1c[0] - c1) - (c1c[1] - c1 + c1c[2] - c1)
+    y1 = c1c[1] - c1c[2]
+    z1 = np.cross(x1, y1, axis=1)
+
+    x2 = (c2c[0] - c2) - (c2c[1] - c2 + c2c[2] - c2)
+    y2 = c2c[1] - c2c[2]
+    z2 = np.cross(x2, y2, axis=1)
+
+    return dimergeom(c1, c2, x1, y1, z1, x2, y2, z2)
+
+
 def hh_analysis(dir=".", *, caname="CA.pdb", trajname="CA.xtc"):
     p = Path(dir)
     capdb = p / caname
@@ -582,6 +676,33 @@ def th_analysis(dir=".", *, caname="CA.pdb", trajname="CA.xtc"):
     with _suppress_c_stdout_stderr():
         t = md.load(str(p / trajname), top=str(capdb))
     d, ang, eu, sx, sy, sz = th_dimergeom(t, clist[0], t, clist[1])
+
+    d, ang, sx, sy, sz = map(np.ravel, (d, ang, sx, sy, sz))
+    eu = np.asarray(eu)
+
+    df = pd.DataFrame(
+        {
+            "dist": d,
+            "angle": 180.0 - ang,
+            "bend": 180.0 - eu[:, 0],
+            "twist": eu[:, 1],
+            "rot": eu[:, 2],
+            "shiftx": sx,
+            "shifty": sy,
+            "shiftz": sz,
+        }
+    )
+    return df
+
+
+def tt_analysis(dir=".", *, caname="CA.pdb", trajname="CA.xtc"):
+    p = Path(dir)
+    capdb = p / caname
+    clist = tt_dimeridx(str(capdb), ["A", "C", "B"], str(capdb), ["D", "F", "E"])
+
+    with _suppress_c_stdout_stderr():
+        t = md.load(str(p / trajname), top=str(capdb))
+    d, ang, eu, sx, sy, sz = tt_dimergeom(t, clist[0], t, clist[1])
 
     d, ang, sx, sy, sz = map(np.ravel, (d, ang, sx, sy, sz))
     eu = np.asarray(eu)
@@ -1244,6 +1365,8 @@ def process_umbrella(
         dimer = ph_analysis(dir, trajname=trajname)
     elif tag == "th":
         dimer = th_analysis(dir, trajname=trajname)
+    elif tag == "tt":
+        dimer = tt_analysis(dir, trajname=trajname)
     else:
         print(f"unknown tag {tag}")
         return
