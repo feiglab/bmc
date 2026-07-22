@@ -151,6 +151,18 @@ def _help_text(visible: set[str], dest: str, text: str) -> str:
     return text if dest in visible else argparse.SUPPRESS
 
 
+class _SafeArgumentDefaultsHelpFormatter(argparse.ArgumentDefaultsHelpFormatter):
+    """Handle fully suppressed mutually exclusive groups safely."""
+
+    def _format_actions_usage(self, actions, groups):
+        visible_groups = [
+            group
+            for group in groups
+            if any(action.help != argparse.SUPPRESS for action in group._group_actions)
+        ]
+        return super()._format_actions_usage(actions, visible_groups)
+
+
 def apply_config_defaults(
     p: argparse.ArgumentParser,
     cfg: dict[str, str],
@@ -578,7 +590,7 @@ def parse_args(
     visible_names = _normalize_visible(visible)
     parser = argparse.ArgumentParser(
         prog=prog,
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        formatter_class=_SafeArgumentDefaultsHelpFormatter,
     )
     _add_all_arguments(parser, visible_names)
     apply_config_defaults(parser, cfg)
